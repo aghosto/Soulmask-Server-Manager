@@ -1,0 +1,40 @@
+﻿{
+  "GameModeType": "PvP",
+  "CastleDamageMode": "TimeRestricted",
+  "CastleHeartDamageMode": "CanBeDestroyedOnlyWhenDecaying",
+  "DeathContainerPermission": "Anyone",
+  "RelicSpawnType": "Unique",
+  "BloodBoundEquipment": true,
+  "PlayerDamageMode": "Always",
+  "PvPProtectionMode": "Short",
+  "SiegeWeaponHealth": "High",
+  "AnnounceSiegeWeaponSpawn": true,
+  "ShowSiegeWeaponMapIcon": false,
+  "BloodDrainModifier": 1.25,
+  "BatBoundItems": true,
+  "BatBoundShards": true,
+  // Not decided yet disabled
+  //"DropTableModifier_General": 1.5,
+  //"DropTableModifier_Missions": 1.5,
+  //"MaterialYieldModifier_Global": 1.5,
+  //"BloodEssenceYieldModifier": 1.5,
+  "StarterEquipmentId": 28431735,
+  "StarterResourcesId": -1370930855,
+  "StartingProgressionLevel": 70,
+  "CastleStatModifiers_Global": {
+    "CastleLimit": 2,
+    "CastleHeartLimitType": 1
+  },
+  "WarEventGameSettings": {
+    "WeekdayTime": {
+      "StartHour": 8,
+      "EndHour": 2,
+      "EndMinute": 0
+    },
+    "WeekendTime": {
+      "StartHour": 8,
+      "EndHour": 2,
+      "EndMinute": 0
+    }
+  }
+}

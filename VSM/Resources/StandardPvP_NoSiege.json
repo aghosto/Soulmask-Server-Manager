@@ -1,0 +1,30 @@
+﻿{
+  "GameModeType": "PvP",
+  "CastleHeartDamageMode": "CanBeDestroyedOnlyWhenDecaying",
+  "DeathContainerPermission": "Anyone",
+  "RelicSpawnType": "Plentiful",
+  "BloodBoundEquipment": true,
+  "PlayerDamageMode": "Always",
+  "CastleDamageMode": "Never",
+  "PvPProtectionMode": "Short",
+  "BloodDrainModifier": 1.25,
+  "BatBoundItems": true,
+  "BatBoundShards": true,
+
+  "CastleStatModifiers_Global": {
+    "CastleLimit": 2,
+    "CastleHeartLimitType": 1
+  },
+  "WarEventGameSettings": {
+    "WeekdayTime": {
+      "StartHour": 8,
+      "EndHour": 2,
+      "EndMinute": 0
+    },
+    "WeekendTime": {
+      "StartHour": 8,
+      "EndHour": 2,
+      "EndMinute": 0
+    }
+  }
+}

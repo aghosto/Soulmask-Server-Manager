@@ -1,0 +1,20 @@
+﻿{
+  "GameModeType": "PvE",
+  "DeathContainerPermission": "ClanMembers",
+  "RelicSpawnType": "Plentiful",
+  "CastleHeartDamageMode": "CanBeDestroyedOnlyWhenDecaying",
+  "CastleDamageMode": "Never",
+  "BloodBoundEquipment": true,
+  "CanLootEnemyContainers": false,
+  "SoulShard_DurabilityLossRate": 0.25,
+  "Death_DurabilityFactorLoss": 0.0,
+  "Death_DurabilityLossFactorAsResources": 0.0,
+  "AnnounceSiegeWeaponSpawn": false,
+  "StarterEquipmentId": 688096336,
+  "StarterResourcesId": 548330870,
+  "StartingProgressionLevel": 50,
+  "CastleStatModifiers_Global": {
+    "CastleLimit": 2,
+    "CastleHeartLimitType": 1
+  }
+}

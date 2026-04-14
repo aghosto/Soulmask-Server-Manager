@@ -2,10 +2,10 @@
  
 # <img src = "VSM/Resources/logo.ico" width = "26">夜族崛起服务端管理器(VSM) - 简中汉化版
 
-![GitHub last commit](https://img.shields.io/github/last-commit/aghosto/V-Rising-Server-Manager---Chinese?logo=github)
-[![Release](https://img.shields.io/github/v/release/aghosto/V-Rising-Server-Manager---Chinese)](https://github.com/aghosto/V-Rising-Server-Manager---Chinese/releases)
+![GitHub last commit](https://img.shields.io/github/last-commit/aghosto/Soulmask-Server-Manager?logo=github)
+[![Release](https://img.shields.io/github/v/release/aghosto/Soulmask-Server-Manager)](https://github.com/aghosto/Soulmask-Server-Manager/releases)
 [![MIT license](https://img.shields.io/badge/license-MIT-brightgreen.svg)](https://opensource.org/licenses/MIT)
-![github stars](https://img.shields.io/github/stars/aghosto/V-Rising-Server-Manager---Chinese?style=social)
+![github stars](https://img.shields.io/github/stars/aghosto/Soulmask-Server-Manager?style=social)
 
 </div>
 

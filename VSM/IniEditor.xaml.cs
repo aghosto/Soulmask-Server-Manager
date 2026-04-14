@@ -1,4 +1,4 @@
-﻿using ModernWpf.Controls;
+using ModernWpf.Controls;
 using SoulMaskServerManager;
 using System;
 using System.Collections.Generic;
@@ -49,7 +49,6 @@ namespace SoulmaskServerManager
 
             _originalLines = File.ReadAllLines(_iniPath).ToList();
             string section = "";
-            RefreshMainServerList();
 
             foreach (var line in _originalLines)
             {
@@ -71,8 +70,8 @@ namespace SoulmaskServerManager
                 {
                     if (key == "SteamServerName") TxtServerName.Text = val;
                     if (key == "MaxPlayers") TxtMaxPlayers.Text = val;
-                    if (key == "backup") TxtBackup.Text = val;
-                    if (key == "saving") TxtSaving.Text = val;
+                    if (key == "backup") txtBackup.Text = val;
+                    if (key == "saving") txtSaving.Text = val;
                     if (key == "pvp")
                     {
                         if (val == "False")
@@ -88,36 +87,6 @@ namespace SoulmaskServerManager
                 }
                 if (section == "URL" && key == "port") TxtPort.Text = val;
                 if (section == "OnlineSubsystemSteam" && key == "GameServerQueryPort") QueryPort.Text = val;
-            }
-
-            _settings = MainSettings.LoadManagerSettings();
-            foreach (var server in _settings.Servers)
-            {
-                if (server.Port == TxtPort.Text)
-                {
-                    ClusterModeComboBox.SelectedIndex = server.CrossServer == "None" ? 0 : (server.CrossServer.Contains("-mainserver") ? 1 : 2);
-                    if (ClusterModeComboBox.SelectedIndex == 2)
-                    {
-                        string mainServerName = FindServerByPort(server.MainPort);
-                        if (!string.IsNullOrEmpty(mainServerName))
-                        {
-                            foreach (var item in MainServerListBox.Items)
-                            {
-                                if (item.ToString() == mainServerName)
-                                {
-                                    MainServerListBox.SelectedItem = item;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    EchoPort.Text = server.EchoPort;
-                    Psw.Text = server.PassWord;
-                    AdminPsw.Text = server.GmPassWord;
-                    BackupInterval.Text = server.BackupInterval;
-                    break;
-                }
             }
         }
 
@@ -152,8 +121,8 @@ namespace SoulmaskServerManager
             output.Add($"MaxPlayers={TxtMaxPlayers.Text}");
             output.Add($"pvp={(pvpModSelect.SelectedIndex == 0 ? "False" : "True")}");
 
-            output.Add($"backup={TxtBackup.Text}");
-            output.Add($"saving={TxtSaving.Text}");
+            output.Add($"backup={txtBackup.Text}");
+            output.Add($"saving={txtSaving.Text}");
 
             output.Add("");
             output.Add("[URL]");
@@ -164,48 +133,38 @@ namespace SoulmaskServerManager
             output.Add($"GameServerQueryPort={QueryPort.Text}");
 
             File.WriteAllLines(_iniPath, output);
-            RefreshMainServerList();
 
-            foreach (var server in _settings.Servers)
-            {
-                if (server.vsmServerName == _currentServer.vsmServerName)
-                {
-                    string crossServerValue = "None";
-                    int mode = ClusterModeComboBox.SelectedIndex;
-                    server.MainPort = "";
+            //foreach (var server in _settings.Servers)
+            //{
+            //    if (server.ssmServerName == _currentServer.ssmServerName)
+            //    {
+            //        string crossServerValue = "None";
+            //        int mode = ClusterModeComboBox.SelectedIndex;
 
-                    if (mode == 1)
-                    {
-                        // 主服务器
-                        crossServerValue = $"-mainserverport={TxtPort.Text}";
-                    }
-                    else if (mode == 2)
-                    {
-                        string mainServerName = MainServerListBox.SelectedItem?.ToString().Trim() ?? "";
+            //        if (mode == 1)
+            //        {
+            //            // 主服务器
+            //            crossServerValue = $"-mainserverport={TxtPort.Text}";
+            //        }
+            //        else if (mode == 2)
+            //        {
+            //            string mainServerName = MainServerListBox.SelectedItem?.ToString().Trim() ?? "";
 
-                        if (string.IsNullOrEmpty(mainServerName))
-                        {
-                            MessageBox.Show("请在列表中点击选择一个主服务器！");
-                            return;
-                        }
+            //            if (string.IsNullOrEmpty(mainServerName))
+            //            {
+            //                MessageBox.Show("请在列表中点击选择一个主服务器！");
+            //                return;
+            //            }
 
-                        // 正常获取端口和IP
-                        string mainPort = GetMainServerPort(mainServerName);
-                        string publicIP = await GetPublicIPAsync();
-                        crossServerValue = $"-clientserverconnect={publicIP}:{mainPort}";
-                        server.MainPort = mainPort;
+            //            // 正常获取端口和IP
+            //            string mainPort = GetMainServerPort(mainServerName);
+            //            string publicIP = await GetPublicIPAsync();
+            //            crossServerValue = $"-clientserverconnect={publicIP}:{mainPort}";
                         
-                    }
-
-                    server.EchoPort = EchoPort.Text;
-                    server.PassWord = Psw.Text;
-                    server.GmPassWord = AdminPsw.Text;
-                    server.BackupInterval = BackupInterval.Text;
-                    server.BackupAmount = BackupAmount.Text;
-                    server.CrossServer = crossServerValue;
-                    server.Port = TxtPort.Text;
-                }
-            }
+            //        }
+            //        server.CrossServer = crossServerValue;
+            //    }
+            //}
             MainSettings.Save(_settings);
 
             var contentDialog = new ContentDialog()
@@ -218,31 +177,14 @@ namespace SoulmaskServerManager
                 Close();
         }
 
-        private void ClusterModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (ClusterModeComboBox.SelectedIndex == 2) 
-                MainServerListBox.Visibility = Visibility.Visible; 
-            else
-                MainServerListBox.Visibility = Visibility.Collapsed;
-        }
+        //private void ClusterModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        //{
+        //    if (ClusterModeComboBox.SelectedIndex == 2) 
+        //        MainServerListBox.Visibility = Visibility.Visible; 
+        //    else
+        //        MainServerListBox.Visibility = Visibility.Collapsed;
+        //}
 
-        void RefreshMainServerList()
-        {
-            foreach (var server in _settings.Servers)
-            {
-                if (server.CrossServer == "None" || server.CrossServer == "-clientserverconnect")
-                    continue;
-                if (server.CrossServer.Contains("-mainserverport"))
-                {
-                    foreach (var name in MainServerListBox.Items)
-                    {
-                        if (name.ToString() == server.vsmServerName)
-                            return;
-                    }
-                    MainServerListBox.Items.Add(server.vsmServerName);
-                }
-            }
-        }
         public async Task<string> GetPublicIPAsync()
         {
             try
@@ -264,8 +206,8 @@ namespace SoulmaskServerManager
             {
                 foreach (var server in _settings.Servers)
                 {
-                    if (server.vsmServerName == mainServerVsmName)
-                        return server.Port;
+                    if (server.ssmServerName == mainServerVsmName)
+                        return "";
                 }
                 return "8777";
             }
@@ -274,24 +216,6 @@ namespace SoulmaskServerManager
                 return "8777";
             }
         }
-
-        public string FindServerByPort(string mainServerPort)
-        {
-            try
-            {
-                foreach (var server in _settings.Servers)
-                {
-                    if (server.Port == mainServerPort)
-                        return server.vsmServerName;
-                }
-                return mainServerPort;
-            }
-            catch
-            {
-                return mainServerPort;
-            }
-        }
-
     }
 
 }

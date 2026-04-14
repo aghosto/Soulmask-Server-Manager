@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -29,6 +29,7 @@ public class MainSettings : PropertyChangedBase
     public AppSettings AppSettings { get; set; } = new AppSettings();
     public Webhook WebhookSettings { get; set; } = new Webhook();
     public List<Mod> DownloadedMods { get; set; } = new List<Mod>();
+    public List<string> MainServers { get; set; } = new List<string>();
 
     /// <summary>
     /// Saves the specified <see cref="MainSettings"/> object.
@@ -36,7 +37,7 @@ public class MainSettings : PropertyChangedBase
     /// <param name="settings">The <see cref="MainSettings"/> object to save.</param>
     public static void Save(MainSettings settings)
     {
-        string dir = Directory.GetCurrentDirectory() + @"\VSMSettings.json";
+        string dir = Directory.GetCurrentDirectory() + @"\SSMSettings.json";
         string SettingsJSON = JsonSerializer.Serialize(settings, _jsonOptions);
         File.WriteAllText(dir, SettingsJSON);
     }
@@ -47,7 +48,7 @@ public class MainSettings : PropertyChangedBase
     /// <returns>The loaded <see cref="MainSettings"/> object.</returns>
     public static MainSettings LoadManagerSettings()
     {
-        string dir = Directory.GetCurrentDirectory() + @"\VSMSettings.json";
+        string dir = Directory.GetCurrentDirectory() + @"\SSMSettings.json";
         if (File.Exists(dir))
         {
             using (StreamReader sr = new(dir, false))
@@ -61,7 +62,7 @@ public class MainSettings : PropertyChangedBase
         {
             ContentDialog yesDialog = new()
             {
-                Content = $"未找到管理器配置文件(VSMSettings.json)，设置未能导入。",
+                Content = $"未找到管理器配置文件(SSMSettings.json)，设置未能导入。",
                 PrimaryButtonText = "是",
             };
             yesDialog.ShowAsync();
@@ -77,66 +78,12 @@ public class MainSettings : PropertyChangedBase
 /// </summary>
 public class Server : PropertyChangedBase
 {
-    public string vsmServerName { get; set; } = "灵魂面甲服务器";
+    public string ssmServerName { get; set; } = "灵魂面甲服务器";
     private string _path = Directory.GetCurrentDirectory() + @"\Server";
     public string Path
     {
         get => _path;
         set => SetField(ref _path, value);
-    }
-    private int _serverMap = 0;
-    public int ServerMap
-    {
-        get => _serverMap;
-        set => SetField(ref _serverMap, value);
-    }
-    private int _gamePvp = 0;
-    public int GamePvp
-    {
-        get => _gamePvp;
-        set => SetField(ref _gamePvp, value);
-    }
-    private string _port = "8777";
-    public string Port
-    {
-        get => _port;
-        set => SetField(ref _port, value);
-    }
-    private string _echoPort = "18888";
-    public string EchoPort
-    {
-        get => _echoPort;
-        set => SetField(ref _echoPort, value);
-    }
-    private string _passWord = "";
-    public string PassWord
-    {
-        get => _passWord;
-        set => SetField(ref _passWord, value);
-    }
-    private string _gmPassWord = "";
-    public string GmPassWord
-    {
-        get => _gmPassWord;
-        set => SetField(ref _gmPassWord, value);
-    }
-    private string _backupInterval = "";
-    public string BackupInterval
-    {
-        get => _backupInterval;
-        set => SetField(ref _backupInterval, value);
-    }
-    private string _backupAmount = "5";
-    public string BackupAmount
-    {
-        get => _backupAmount;
-        set => SetField(ref _backupAmount, value);
-    }
-    private string _mainPort = "";
-    public string MainPort
-    {
-        get => _mainPort;
-        set => SetField(ref _mainPort, value);
     }
     private bool _firstStart = true;
     public bool FirstStart
@@ -202,6 +149,7 @@ public class Server : PropertyChangedBase
         get => _runWithoutWindow;
         set => SetField(ref _runWithoutWindow, value);
     }
+    public string UniqueId { get; set; }
 
     public Dictionary<string, string> InstalledModVersions { get; set; } = new();
 }
@@ -266,6 +214,7 @@ public class ServerRuntime : PropertyChangedBase
     public Process? Process { get; set; }
     public bool UserStopped { get; set; } = false;
     public int RestartAttempts { get; set; } = 0;
+    public System.Timers.Timer BackupCleanTimer { get; set; }
     public enum ServerState
     {
         已停止,
@@ -298,8 +247,8 @@ public class RCONServerSettings : PropertyChangedBase
         get => _ipAddress;
         set => SetField(ref _ipAddress, value);
     }
-    private string _port = "25575";
-    public string Port
+    private int _port = 19000;
+    public int Port
     {
         get => _port;
         set => SetField(ref _port, value);
@@ -310,6 +259,7 @@ public class RCONServerSettings : PropertyChangedBase
         get => _password;
         set => SetField(ref _password, value);
     }
+
 }
 
 /// <summary>
@@ -462,6 +412,11 @@ public class AppSettings : PropertyChangedBase
     }
 }
 
+public class ServerId
+{
+
+}
+
 /// <summary>
 /// Property of <see cref="MainSettings"/> used for webhook settings.
 /// </summary>
@@ -487,7 +442,6 @@ public class Webhook : PropertyChangedBase
         set => SetField(ref _updateWait, value);
     }
 }
-
 public class Mod : PropertyChangedBase
 {
     private bool _downloaded = false;
@@ -522,6 +476,7 @@ public class Mod : PropertyChangedBase
     }
 
 }
+
 
 /// <summary>
 /// Class to implement INotifyPropertyChanged easily

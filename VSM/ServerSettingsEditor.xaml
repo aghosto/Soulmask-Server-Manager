@@ -7,12 +7,8 @@
         xmlns:ui="http://schemas.modernwpf.com/2019" xmlns:local1="clr-namespace:SoulMaskServerManager.Controls"
         ui:WindowHelper.UseModernWindowStyle="True"
         mc:Ignorable="d"
-        Title="服务器端设置编辑器" Height="560" Width="820" MinHeight="560" MinWidth="600" MaxHeight="600" MaxWidth="820" ResizeMode="CanResize" Icon="Resources\icon_EditDocument.png">
+        Title="服务器端设置编辑器" Height="570" Width="750" MinHeight="550" MinWidth="600" ResizeMode="NoResize" Icon="Resources\icon_EditDocument.png">
     <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="Auto"/>
-            <ColumnDefinition Width="Auto"/>
-        </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -39,22 +35,29 @@
             </MenuItem>
         </Menu>
 
-        <StackPanel Grid.Row="1" Margin="5, 0, 0, 0">
+        <StackPanel Grid.Row="1" Margin="5, 0, 0, 0" HorizontalAlignment="Stretch">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Width="400" HorizontalAlignment="Left">
+                <StackPanel HorizontalAlignment="Stretch">
+                    <DockPanel>
+                        <TextBlock Text="服务器设置预设选择" Height="20"/>
+                        <ComboBox x:Name="ServerSettingsPresetComboBox" Width="250" IsEnabled="False" HorizontalAlignment="Right">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding DisplayName}"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </DockPanel>
+                    
                     <DockPanel>
                         <TextBlock Text="服务器名称" Height="20"/>
-                        <TextBox Height="20" Text="{Binding Name, Mode=TwoWay}" IsEnabled="True"  HorizontalAlignment="Right" Width="250"/>
+                        <TextBox Height="80" Text="{Binding SteamServerName, Mode=TwoWay}" IsEnabled="True"  HorizontalAlignment="Right" Width="250" TextWrapping="Wrap"/>
                     </DockPanel>
-                    <!--<DockPanel Margin="0,5,0,0">
-                        <TextBlock Text="描述" Height="20" DockPanel.Dock="Left" VerticalAlignment="Top"/>
-                        <TextBox Height="150" Text="{Binding Description, Mode=TwoWay}" HorizontalAlignment="Right" Width="250" ToolTip="简短的服务器描述。设置条目后，将显示在服务器列表的详细信息面板中，当连接到服务器时，还会在聊天中暂时显示。" TextWrapping="Wrap"/>
-                    </DockPanel>-->
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="连接端口" Height="20"/>
                         <ui:NumberBox Value="{Binding Port, Mode=TwoWay}" Maximum="65535" Minimum="1" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="连接服务器时所需填写的端口"/>
@@ -65,42 +68,70 @@
                     </DockPanel>
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="最大游戏玩家数" Height="20"/>
-                        <ui:NumberBox Value="{Binding MaxConnectedUsers, Mode=TwoWay}" Maximum="80" Minimum="1" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="服务器上在线玩家的最大数量。"/>
-                    </DockPanel>
-                    <!--<DockPanel Margin="0,5,0,0">
-                        <TextBlock Text="最大连接管理员数" Height="20"/>
-                        <ui:NumberBox Value="{Binding MaxConnectedAdmins, Mode=TwoWay}" Maximum="80" Minimum="1" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="允许连接的最大管理员数量，即使服务器已满。"/>
-                    </DockPanel>-->
-                    <DockPanel Margin="0,5,0,0">
-                        <TextBlock Text="服务器Fps" Height="20"/>
-                        <ui:NumberBox Value="{Binding ServerFps, Mode=TwoWay}" Maximum="120" Minimum="15" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="服务器的目标最大FPS。"/>
+                        <ui:NumberBox Value="{Binding MaxPlayers, Mode=TwoWay}" Maximum="80" Minimum="1" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="服务器上在线玩家的最大数量。"/>
                     </DockPanel>
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="存档名称" Height="20" />
-                        <TextBox Height="20" Text="{Binding SaveName, Mode=TwoWay}" IsEnabled="False" HorizontalAlignment="Right" Width="250" ToolTip="服务器的存档名称，一般不用更改，有特殊需求以及自己知道在做什么的情况下再到游戏文件中进行修改。" FontSize="14"/>
+                        <TextBox Text="{Binding Map, Mode=TwoWay}" IsEnabled="False" HorizontalAlignment="Right" Width="250" ToolTip="服务器的存档名称，一般不用更改，有特殊需求以及自己知道在做什么的情况下再到游戏文件中进行修改。" FontSize="14"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,5,0,0">
+                        <TextBlock Text="磁盘保存间隔" Height="20" />
+                        <ui:NumberBox Value="{Binding Backup, Mode=TwoWay}" HorizontalAlignment="Right" Width="250" ToolTip="服务器存档保存至磁盘的间隔" FontSize="14"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,5,0,0">
+                        <TextBlock Text="内存保存间隔" Height="20" />
+                        <ui:NumberBox Value="{Binding Saving, Mode=TwoWay}" HorizontalAlignment="Right" Width="250" ToolTip="服务器存档保存到内存的间隔" FontSize="14"/>
                     </DockPanel>
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="密码" Height="20"/>
                         <TextBox Height="20" Text="{Binding Password, Mode=TwoWay}" HorizontalAlignment="Right" Width="250" ToolTip="设置密码或保留为空。"/>
                     </DockPanel>
                     <DockPanel Margin="0,5,0,0">
-                        <TextBlock Text="地址" Height="20"/>
-                        <TextBox Height="20" Text="{Binding Address, Mode=TwoWay}" HorizontalAlignment="Right" Width="250" ToolTip="绑定的域名，未开发完成。" IsEnabled="False"/>
+                        <TextBlock Text="管理员密码" Height="20"/>
+                        <TextBox Height="20" Text="{Binding GMPassword, Mode=TwoWay}" HorizontalAlignment="Right" Width="250" ToolTip="设置管理员密码或保留为空。"/>
                     </DockPanel>
-
+                    <DockPanel Margin="0,5,0,0">
+                        <!--<TextBlock Text="公网IP" Height="20"/>-->
+                        <CheckBox x:Name="ManualIPCheckBox" IsChecked="{Binding ManualIP, Mode=TwoWay}" Content="手动输入公网IP"/>
+                        <TextBox x:Name="PublicIPTextBox" Height="20" Text="{Binding PublicIP}" HorizontalAlignment="Right" Width="250" ToolTip="自动获取的公网ip地址" IsEnabled="{Binding ManualIP}"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,5,0,0">
+                        <TextBlock Text="地图选择" Height="20"/>
+                        <ComboBox 
+                                x:Name="MapSelectComboBox" 
+                                Margin="10" 
+                                OverridesDefaultStyle="True"
+                                Width="240">
+                            <ComboBoxItem Content="云雾之森—Level01_Main"/>
+                            <ComboBoxItem Content="金色浮沙—DLC_Level01_Main"/>
+                        </ComboBox>
+                        <ComboBox 
+                                x:Name="PVPSelectComboBox" 
+                                Margin="10 10 0 0" 
+                                Width="100"
+                                OverridesDefaultStyle="True"
+                                HorizontalAlignment="Right">
+                            <ComboBoxItem Content="PVE"/>
+                            <ComboBoxItem Content="PVP"/>
+                        </ComboBox>
+                    </DockPanel>
 
                 </StackPanel>
 
-                <StackPanel Grid.Column="1" Width="400" HorizontalAlignment="Left" Margin="10, 0, 0, 0">
+                <StackPanel Grid.Column="1" Margin="20, 0, 0, 0">
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="自动保存数" Height="20"/>
-                        <ui:NumberBox Value="{Binding AutoSaveCount, Mode=TwoWay}" Maximum="200" Minimum="1" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="要保留的自动保存存档的数量。"/>
+                        <ui:NumberBox Value="{Binding AutoSaveCount, Mode=TwoWay}" Maximum="200" Minimum="1" HorizontalAlignment="Right" Width="200" SpinButtonPlacementMode="Inline" ToolTip="要保留的自动保存存档的数量。"/>
                     </DockPanel>
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="自动保存间隔" Height="20"/>
-                        <ui:NumberBox Value="{Binding AutoSaveInterval, Mode=TwoWay}" Maximum="3600" Minimum="5" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="每次自动保存之间的间隔(以秒为单位)。"/>
+                        <ui:NumberBox Value="{Binding AutoSaveInterval, Mode=TwoWay}" Maximum="3600" Minimum="5" HorizontalAlignment="Right" Width="200" SpinButtonPlacementMode="Inline" ToolTip="每次自动保存之间的间隔(以分为单位)。"/>
                     </DockPanel>
-                    <CheckBox Content="压缩保存文件" Height="20" IsChecked="{Binding CompressSaveFiles, Mode=TwoWay}" ToolTip="自动压缩保存的文件。" FontSize="12"/>
+                    <DockPanel Margin="0,5,0,0">
+                        <TextBlock Text="删除存档间隔" Height="20"/>
+                        <ui:NumberBox Value="{Binding AutoCleanInterval, Mode=TwoWay}" Maximum="3600" Minimum="1" HorizontalAlignment="Right" Width="200" SpinButtonPlacementMode="Inline" ToolTip="每次自动删除最早的备份的时间间隔(以分为单位)。"/>
+                    </DockPanel>
+                    <!--<CheckBox Content="压缩保存文件" Height="20" IsChecked="{Binding CompressSaveFiles, Mode=TwoWay}" ToolTip="自动压缩保存的文件。" FontSize="12"/>
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="重置天数间隔" Height="20"/>
                         <ui:NumberBox Value="{Binding ResetDaysInterval, Mode=TwoWay}" Maximum="280" Minimum="0" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="计划重置/擦除之间的天数。当服务器启动并即将加载保存文件时，它会检查是否需要重置并启动新的保存文件；将备份以前的保存文件。默认为0，表示该功能处于禁用状态。"/>
@@ -111,26 +142,36 @@
                     </DockPanel>
                     <CheckBox Content="仅限管理员调试事件" Height="20" IsChecked="{Binding AdminOnlyDebugEvents, Mode=TwoWay}" FontSize="12"/>
                     <CheckBox Content="禁用调试事件" Height="20" IsChecked="{Binding DisableDebugEvents, Mode=TwoWay}" FontSize="12"/>
-                    <CheckBox Content="隐藏IP地址" Height="20" IsChecked="{Binding HideIPAddress, Mode=TwoWay}" FontSize="12" ToolTip="勾选后，服务器只能通过Steam直连。"/>
-                    <CheckBox Content="API启用" Height="20" IsChecked="{Binding API.Enabled, Mode=TwoWay}" ToolTip="启用或禁用API功能。" FontSize="12"/>
+                    <CheckBox Content="隐藏IP地址" Height="20" IsChecked="{Binding HideIPAddress, Mode=TwoWay}" FontSize="12" ToolTip="勾选后，服务器只能通过Steam直连。"/>-->
+                    <!--<CheckBox Content="API启用" Height="20" IsChecked="{Binding API.Enabled, Mode=TwoWay}" ToolTip="启用或禁用API功能。" FontSize="12"/>-->
                     <DockPanel>
-                        <TextBlock Text="API端口" Height="20"/>
-                        <ui:NumberBox Value="{Binding API.BindPort, Mode=TwoWay}" Maximum="65535" Minimum="1" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Compact" ToolTip="设置API端口"/>
+                        <TextBlock Text="监听端口" Height="20"/>
+                        <ui:NumberBox Value="{Binding EchoPort, Mode=TwoWay}" Maximum="65535" Minimum="1" HorizontalAlignment="Right" Width="200" SpinButtonPlacementMode="Inline" ToolTip="设置监听端口，可使用Telnet对服务器发送关服等指令"/>
                     </DockPanel>
-                    <CheckBox Content="RCON启用" Height="20" IsChecked="{Binding Rcon.Enabled, Mode=TwoWay}" ToolTip="启用或禁用远程控制功能。" FontSize="12"/>
-                    <DockPanel Margin="0,5,0,0">
-                        <TextBlock Text="RCON密码" Height="20"/>
-                        <TextBox Height="20" Text="{Binding Rcon.Password, Mode=TwoWay}" HorizontalAlignment="Right" Width="250" ToolTip="RCON密码。"/>
-                    </DockPanel>
-                    <DockPanel Margin="0,5,0,0">
-                        <TextBlock Text="RCON端口" Height="20"/>
-                        <ui:NumberBox Value="{Binding Rcon.Port, Mode=TwoWay}" Maximum="65535" Minimum="1" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="RCON TCP端口。"/>
-                    </DockPanel>
-                    <DockPanel Margin="0, 10, 0, 0" HorizontalAlignment="Center">
-                        <CheckBox Content="防作弊" Height="20" IsChecked="{Binding Secure, Mode=TwoWay}" ToolTip="在服务器上启用VAC保护。VAC禁止的客户端将无法连接。" FontSize="12"/>
-                        <CheckBox Content="在Steam上显示" Height="20" IsChecked="{Binding ListOnSteam, Mode=TwoWay}" ToolTip="在Steam服务器上显示或不显示。" FontSize="12"/>
-                        <CheckBox Content="在EOS上显示" Height="20" IsChecked="{Binding ListOnEOS, Mode=TwoWay}" ToolTip="在EOS(Epic Of Server)服务器上显示或不显示。" FontSize="12"/>
-                    </DockPanel>
+                    <TextBlock Text="参与服务器集群" FontSize="15" Margin="0 8 0 0"/>
+                    <ComboBox 
+                            x:Name="ClusterModeComboBox"
+                            HorizontalAlignment="Stretch"
+                            SelectedIndex="{Binding ClusterMode, Mode=TwoWay}">
+                        <ComboBoxItem Content="无"           Tag="None" ToolTip="不参与服务器集群"/>
+                        <ComboBoxItem Content="作为主服务器" Tag="MainServer" ToolTip="作为集群主服务器"/>
+                        <ComboBoxItem Content="作为副服务器" Tag="SubServer" ToolTip="关联到一个主服务器"/>
+                    </ComboBox>
+                    <TextBlock Text="选择要绑定的主服务器" FontSize="15" Margin="0 8 0 0"/>
+                    <ListBox 
+                            x:Name="MainServerListBox"
+                            Height="110"
+                            HorizontalAlignment="Stretch"
+                            Margin="0 5 0 0"
+                            DisplayMemberPath="DisplayText">
+                    </ListBox>
+                    <StackPanel>
+                        <DockPanel  Height="30">
+                            <TextBlock Text="MOD" VerticalAlignment="Center"/>
+                            <TextBlock Text="（如需输入多个mod，需要用英文的逗号分开！）" FontSize="10" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <TextBox Height="120" Text="{Binding Mods, Mode=TwoWay}" HorizontalAlignment="Stretch" TextWrapping="Wrap"/>
+                    </StackPanel>
                 </StackPanel>
             </Grid>
         </StackPanel>

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO.Compression;
@@ -33,6 +33,7 @@ using SoulMaskServerManager;
 using SoulmaskServerManager;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Runtime;
 
 namespace SoulMaskServerManager;
 
@@ -41,25 +42,27 @@ namespace SoulMaskServerManager;
 /// </summary>
 public partial class MainWindow : Window
 {
-    public MainSettings VsmSettings = new();
+    public MainSettings SsmSettings = new();
     private static dWebhook DiscordSender = new();
     private static HttpClient HttpClient = new();
-    private VoiceServicesSettings VoiceServicesSettings = new();
     private PeriodicTimer? AutoUpdateTimer;
     private PeriodicTimer? AutoRestartTimer;
+    private PeriodicTimer? AutoDelectSaveTimer;
     private RemoteConClient RCONClient;
-    private ServerSpecSettings ServerSpecSettings = new();
     //private ChangeSaveFileEditor changeSaveFileEditor = new();
 
     private static MainWindow? _instance;
     public static MainWindow Instance => _instance ?? throw new InvalidOperationException("MainWindow未初始化");
 
+    // 自动清理存档计时器
+    private System.Timers.Timer _backupCleanTimer;
+    // 存档路径
+    //private string _backupFolderPath => Path.Combine(_currentServer.Path, "WS", "Saved", "World", "Dedicated", $"{(_currentServer.ServerMap == 0 ? "Level01_Main" : "DLC_Level01_Main")}");
+
     // 日志文件相对路径（基于当前服务器路径）
     private readonly Dictionary<LogType, string> _logTypeToTag = new Dictionary<LogType, string>
     {
         { LogType.WSServer, @"WS\Saved\Logs\WS.log" },
-        { LogType.BepinExOutput, @"BepInEx\LogOutput.log" },
-        { LogType.BepinExError, @"BepInEx\ErrorLog.log" }
     };
 
     private Dictionary<string, LogType> _logTagToType;
@@ -73,7 +76,6 @@ public partial class MainWindow : Window
     // 最大加载行数
     private const int MAX_LOG_LINES = 600;
 
-
     private LogManager LogManager;
 
     // 定时器（用于定时检查日志更新）
@@ -82,16 +84,6 @@ public partial class MainWindow : Window
 
     // 记录上次检查时的文件大小
     private Dictionary<LogType, long> _lastFileSizes = new Dictionary<LogType, long>();
-
-    // 存储已连接玩家的信息
-    public Dictionary<ulong, VRisingPlayerInfo> _connectedPlayers = new Dictionary<ulong, VRisingPlayerInfo>();
-
-    // 存储正在当前登录的玩家SteamID和时间
-    private Dictionary<ulong, DateTime> _pendingConnections = new Dictionary<ulong, DateTime>();
-
-    // 用于关联暂时分配的netEndpoint和玩家信息
-    private Dictionary<string, VRisingPlayerInfo> _netEndpointToPlayer = new Dictionary<string, VRisingPlayerInfo>();
-    private PlayerDataManager _playerDataManager;
 
     // 管理员列表文件路径
     private string AdminListPath => Path.Combine(_currentServer.Path, @"SaveData\Settings\adminlist.txt");
@@ -106,27 +98,29 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
-        if (!File.Exists(Directory.GetCurrentDirectory() + @"\VSMSettings.json"))
-            MainSettings.Save(VsmSettings);
+        if (!File.Exists(Directory.GetCurrentDirectory() + @"\SSMSettings.json"))
+            MainSettings.Save(SsmSettings);
         else
-            VsmSettings = MainSettings.LoadManagerSettings();
+        {
+            //ServerIdMapping.Load();
+            //ServerIdMapping.EnsureAllServersHaveIds();
+            SsmSettings = MainSettings.LoadManagerSettings();
+        }
+        DataContext = SsmSettings;
 
-        DataContext = VsmSettings;
-
-        if (VsmSettings.AppSettings.DarkMode == true)
+        if (SsmSettings.AppSettings.DarkMode == true)
             ThemeManager.Current.ApplicationTheme = ApplicationTheme.Dark;
         else
             ThemeManager.Current.ApplicationTheme = ApplicationTheme.Light;
 
 
         InitializeComponent();
-        //DataContext = this;
 
         Closing += MainWindow_Closing;
         Loaded += MainWindow_Loaded;
 
         // 初始化定时器（每1秒检查一次）
-        if (VsmSettings.Servers.Count != 0)
+        if (SsmSettings.Servers.Count != 0)
         {
             _logUpdateTimer = new DispatcherTimer
             {
@@ -140,65 +134,37 @@ public partial class MainWindow : Window
         // 初始化日志控件映射
         _logTypeToTexbox = new Dictionary<LogType, RichTextBox>
         {
-            { LogType.WSServer, VRisingLogTextBox },
+            { LogType.WSServer, SoulmaskLogTextBox },
             { LogType.MainConsole, MainMenuConsoleTextBox },
-            //{ LogType.BepinExOutput, BepinExOutputLogTextBox },
-            //{ LogType.BepinExError, BepinExErrorLogTextBox }
         };
 
         // 初始化自动滚动控件映射
         _logTypeToCheckbox = new Dictionary<LogType, CheckBox>
         {
-            { LogType.WSServer, AutoScrollVRisingLog },
+            { LogType.WSServer, AutoScrollSoulmaskLog },
             { LogType.MainConsole, AutoScrollMainConsole },
-            //{ LogType.BepinExOutput, AutoScrollBepinExOutputLog },
-            //{ LogType.BepinExError, AutoScrollBepinExErrorLog }
         };
         
-
         _logTagToType = new Dictionary<string, LogType>
         {
             { "WSServer", LogType.WSServer },
             { "MainConsole", LogType.MainConsole },
-            { "BepinExOutput", LogType.BepinExOutput },
-            { "BepinExError", LogType.BepinExError },
         };
 
-        // 初始化日志定时器时调整间隔
-        //_logUpdateTimer = new DispatcherTimer
-        //{
-        //    Interval = TimeSpan.FromMilliseconds(1000)
-        //};
-
         // 绑定自动滚动复选框事件
-        AutoScrollVRisingLog.Checked += AutoScrollCheckBox_CheckedChanged;
-        AutoScrollVRisingLog.Unchecked += AutoScrollCheckBox_CheckedChanged;
-        //AutoScrollBepinExOutputLog.Checked += AutoScrollCheckBox_CheckedChanged;
-        //AutoScrollBepinExOutputLog.Unchecked += AutoScrollCheckBox_CheckedChanged;
-        //AutoScrollBepinExErrorLog.Checked += AutoScrollCheckBox_CheckedChanged;
-        //AutoScrollBepinExErrorLog.Unchecked += AutoScrollCheckBox_CheckedChanged;
+        AutoScrollSoulmaskLog.Checked += AutoScrollCheckBox_CheckedChanged;
+        AutoScrollSoulmaskLog.Unchecked += AutoScrollCheckBox_CheckedChanged;
 
         // 监听服务器选择变化
         ServerTabControl.SelectionChanged += async (s, e) =>
         {
-            if (VsmSettings.Servers.Count == 0)
+            if (SsmSettings.Servers.Count == 0)
                 return;
             if (ServerTabControl.SelectedItem is Server selectedServer)
             {
                 _currentServer = selectedServer;
                 if (_currentServer.FirstStart)
                     return;
-
-                _playerDataManager = new PlayerDataManager(_currentServer, this);
-                if (_currentServer.Runtime.State == ServerRuntime.ServerState.运行中)
-                {
-                    InitializeLogWatchers();
-                    //InitializeServerStateListener();
-                    //InitializePlayerDataManager(_currentServer);
-                    //ReadLog(_currentServer);
-                    //UpdatePlayerCountText();
-                }
-                //RefreshAdminStatus();
                 if (!string.IsNullOrEmpty(_activeLogType))
                 {
                     LoadLogByType(_logTagToType[_activeLogType], true);
@@ -206,17 +172,15 @@ public partial class MainWindow : Window
             }
         };
 
-        //InitializeServerList();
-
-        VsmSettings.AppSettings.PropertyChanged += AppSettings_PropertyChanged;
-        VsmSettings.Servers.CollectionChanged += Servers_CollectionChanged; // MVVM method not working
-        VsmSettings.AppSettings.Version = new AppSettings().Version;
+        SsmSettings.AppSettings.PropertyChanged += AppSettings_PropertyChanged;
+        SsmSettings.Servers.CollectionChanged += Servers_CollectionChanged; // MVVM method not working
+        SsmSettings.AppSettings.Version = new AppSettings().Version;
 
         // 初始化日志
         ShowLogMsg($"灵魂面甲服务端管理器(SSM)启动成功。", Brushes.Lime);
-        ShowLogMsg(((VsmSettings.Servers.Count > 0) ? $"{VsmSettings.Servers.Count} 个服务器从设置中加载成功。" : $"未找到服务器，请点击“添加服务器”以开始使用。"), VsmSettings.Servers.Count > 0 ? Brushes.Lime : Brushes.Yellow);
+        ShowLogMsg(((SsmSettings.Servers.Count > 0) ? $"{SsmSettings.Servers.Count} 个服务器从设置中加载成功。" : $"未找到服务器，请点击“添加服务器”以开始使用。"), SsmSettings.Servers.Count > 0 ? Brushes.Lime : Brushes.Yellow);
 
-        ScanForServers();
+        //ScanForServers();
         SetupTimer();
         SetAutoRestartTimer();
 
@@ -229,7 +193,7 @@ public partial class MainWindow : Window
             ShowLogMsg($"旧版更新程序清理完成。", Brushes.Gray);
         }
 
-        if (VsmSettings.AppSettings.AutoUpdateApp == true)
+        if (SsmSettings.AppSettings.AutoUpdateApp == true)
             LookForUpdate();
     }
 
@@ -460,7 +424,7 @@ public partial class MainWindow : Window
                 {
                     ShowLogMsg($"日志文件不存在：{fullPath}", Brushes.Yellow, logType);
                     ShowLogMsg($"请确保服务器有正常启动过至少一次", Brushes.Yellow, logType);
-                    //if (logBox != VRisingLogTextBox)
+                    //if (logBox != SoulmaskLogTextBox)
                     //{
                     //    ShowLogMsg($"或当前服务器并不是Mod服务器", Brushes.Yellow, logType);
                     //}
@@ -565,12 +529,12 @@ public partial class MainWindow : Window
 
     private async Task RestoreRunningServers()
     {
-        foreach (var server in VsmSettings.Servers)
+        foreach (var server in SsmSettings.Servers)
         {
             try
             {
                 string windowTitle = $@"{server.Path}\WS\Binaries\Win64\WSServer-Win64-Shipping.exe";
-
+                ServerSettings serverSettings = ServerSettingsEditor.LoadServerSettings(Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json"));
                 int pid = GetProcessIdByWindowTitle(windowTitle);
 
                 if (pid > 0)
@@ -597,7 +561,8 @@ public partial class MainWindow : Window
                             });
                         });
 
-                        ShowLogMsg($"[{server.vsmServerName}] 检测到正在运行，已自动关联进程", Brushes.Cyan);
+                        StartBackupCleanTimer(server, serverSettings.AutoCleanInterval, serverSettings.AutoSaveCount);
+                        ShowLogMsg($"[{server.ssmServerName}] 检测到正在运行，已自动关联进程", Brushes.Cyan);
                     }
                 }
                 else
@@ -618,7 +583,7 @@ public partial class MainWindow : Window
             return;
 
         if (ServerNameText != null)
-            ServerNameText.Text = _currentServer.vsmServerName;
+            ServerNameText.Text = _currentServer.ssmServerName;
 
         var serverState = _currentServer.Runtime?.State ?? ServerRuntime.ServerState.已停止;
         string statusText = serverState == ServerRuntime.ServerState.运行中 ? "运行中" : "已停止";
@@ -766,12 +731,6 @@ public partial class MainWindow : Window
                 case LogType.WSServer:
                     logPath = Path.Combine(_currentServer.Path, "WS", "Saved", "Logs", "WS.log");
                     break;
-                case LogType.BepinExOutput:
-                    logPath = Path.Combine(_currentServer.Path, "BepInEx", "LogOutput.log");
-                    break;
-                case LogType.BepinExError:
-                    logPath = Path.Combine(_currentServer.Path, "BepInEx", "ErrorLog.log");
-                    break;
                 default:
                     await ShowErrorDialog($"不支持的日志类型");
                     return;
@@ -815,7 +774,7 @@ public partial class MainWindow : Window
         var paragraph = new Paragraph();
         paragraph.Foreground = GetLogColor(line);
         paragraph.Inlines.Add(new Run(line));
-        paragraph.Margin = new Thickness(0);
+        paragraph.Margin = new Thickness(2);
         _logTypeToTexbox[logType].Document.Blocks.Add(paragraph);
     }
 
@@ -827,9 +786,8 @@ public partial class MainWindow : Window
             string timestampedMessage = $"[{GetTimestamp("log")}]  {message}";
             Paragraph paragraph = new Paragraph(new Run(timestampedMessage));
             paragraph.Foreground = color;
-
-            // 消除段落间距
             paragraph.Margin = new Thickness(0);
+
             targetTextBox.Document.Blocks.Add(paragraph);
             if (_logTypeToCheckbox[logType]?.IsChecked == true)
             {
@@ -852,12 +810,12 @@ public partial class MainWindow : Window
 
     private Brush GetLogColor(string line)
     {
-        if (string.IsNullOrEmpty(line)) return Brushes.White;
+        if (string.IsNullOrEmpty(line)) return Brushes.AliceBlue;
         string lowerLine = line.ToLower();
 
-        if (lowerLine.Contains("[error") || lowerLine.Contains("exception"))
+        if (lowerLine.Contains("error:") || lowerLine.Contains("exception"))
             return Brushes.Red;
-        if (lowerLine.Contains("[warning") || lowerLine.Contains("warn") || lowerLine.Contains("internal") || lowerLine.Contains("debug"))
+        if (lowerLine.Contains("warning:") || lowerLine.Contains("warn:") || lowerLine.Contains("internal:") || lowerLine.Contains("debug:"))
             return Brushes.Yellow;
         //if (lowerLine.Contains("[info"))
         //    return Brushes.LimeGreen;
@@ -897,15 +855,15 @@ public partial class MainWindow : Window
                 string latestVersion = await response.Content.ReadAsStringAsync();
                 latestVersion = latestVersion.Trim();
 
-                if (latestVersion != VsmSettings.AppSettings.Version)
+                if (latestVersion != SsmSettings.AppSettings.Version)
                 {
-                    VsmSettings.AppSettings.HasNewVersion = true;
-                    VsmSettings.AppSettings.NewVersion = latestVersion;
+                    SsmSettings.AppSettings.HasNewVersion = true;
+                    SsmSettings.AppSettings.NewVersion = latestVersion;
                     ShowLogMsg($"发现新版本：{latestVersion}，可点击左下角版本按钮更新软件", Brushes.Yellow);
                 }
                 else
                 {
-                    VsmSettings.AppSettings.HasNewVersion = false;
+                    SsmSettings.AppSettings.HasNewVersion = false;
                     ShowLogMsg($"正在运行最新的版本：{latestVersion}", Brushes.Lime);
                 }
 
@@ -963,25 +921,106 @@ public partial class MainWindow : Window
     /// </summary>
     public void SetupTimer()
     {
-        if (VsmSettings.AppSettings.AutoUpdate == true)
+        if (SsmSettings.AppSettings.AutoUpdate == true)
         {
 #if DEBUG
             AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
 #else
-            AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromMinutes(VsmSettings.AppSettings.AutoUpdateInterval));
+            AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromMinutes(SsmSettings.AppSettings.AutoUpdateInterval));
 #endif
             AutoUpdateLoop();
         }
     }
 
-
     public void SetAutoRestartTimer()
     {
-        if (VsmSettings.AppSettings.EnableAutoRestart == true)
+        if (SsmSettings.AppSettings.EnableAutoRestart == true)
         {
-            ShowLogMsg($"自动重启已启动，重启时间为每日的 {VsmSettings.AppSettings.AutoRestartHour} 时 {VsmSettings.AppSettings.AutoRestartMin} 分 {VsmSettings.AppSettings.AutoRestartSec} 秒。", Brushes.Yellow);
+            ShowLogMsg($"自动重启已启动，重启时间为每日的 {SsmSettings.AppSettings.AutoRestartHour} 时 {SsmSettings.AppSettings.AutoRestartMin} 分 {SsmSettings.AppSettings.AutoRestartSec} 秒。", Brushes.Yellow);
             AutoRestartTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
             AutoRestartLoop();
+        }
+    }
+
+    public static void StartBackupCleanTimer(Server server, int deleteInterval, int backupAmount)
+    {
+        try
+        {
+            // 停止这个服务器自己的旧计时器
+            if (server.Runtime.BackupCleanTimer != null)
+            {
+                server.Runtime.BackupCleanTimer.Stop();
+                server.Runtime.BackupCleanTimer.Dispose();
+            }
+
+            double checkMinutes = Convert.ToDouble(deleteInterval);
+            int keepCount = Convert.ToInt32(backupAmount);
+
+            if (checkMinutes <= 0) checkMinutes = 10;
+            if (keepCount <= 0) keepCount = 5;
+
+            // 每个服务器创建自己独立的计时器
+            server.Runtime.BackupCleanTimer = new System.Timers.Timer();
+            server.Runtime.BackupCleanTimer.Interval = checkMinutes * 60 * 1000;
+            server.Runtime.BackupCleanTimer.AutoReset = true;
+
+            server.Runtime.BackupCleanTimer.Elapsed += (s, ev) => CleanOldBackups(server, keepCount);
+            server.Runtime.BackupCleanTimer.Start();
+
+            //ShowLogMsg($"✅ 自动存档清理已启动：{server.ssmServerName} | 每 {checkMinutes} 分钟 | 保留 {keepCount} 个", Brushes.Orange);
+        }
+        catch
+        {
+            //ShowLogMsg($"❌ {server.ssmServerName} 自动存档清理启动失败", Brushes.Red);
+        }
+    }
+
+    private void StopBackupCleanTimer(Server server)
+    {
+        if (server.Runtime.BackupCleanTimer != null)
+        {
+            server.Runtime.BackupCleanTimer.Stop();
+            server.Runtime.BackupCleanTimer.Dispose();
+            server.Runtime.BackupCleanTimer = null;
+        }
+    }
+
+    private static void CleanOldBackups(Server server, int keepCount)
+    {
+        try
+        {
+            ServerSettings serverSettings = ServerSettingsEditor.LoadServerSettings(Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json"));
+            string savePath = Path.Combine(server.Path, "WS", "Saved", "Worlds", "Dedicated", $"{serverSettings.Map}");
+
+            if (!Directory.Exists(savePath))
+                return;
+
+            var backupFiles = Directory.GetFiles(savePath, "*.*", SearchOption.TopDirectoryOnly)
+                .Select(f => new FileInfo(f))
+                .OrderByDescending(f => f.LastWriteTime)
+                .ToList();
+
+            if (backupFiles.Count <= keepCount)
+                return;
+
+            var filesToDelete = backupFiles.Skip(keepCount).ToList();
+
+            // 执行删除
+            foreach (var file in filesToDelete)
+            {
+                try
+                {
+                    file.Delete();
+                    //ShowLogMsg($"🗑️ 已删除旧存档：{file.Name}", Brushes.Orange);
+                }
+                catch { }
+            }
+
+            //ShowLogMsg($"📁 存档清理完成：当前 {backupFiles.Count - filesToDelete.Count} 个（保留 {keepCount} 个）", Brushes.LightGreen);
+        }
+        catch
+        {
+            //ShowLogMsg("❌ 存档清理时出错", Brushes.Red);
         }
     }
 
@@ -989,16 +1028,16 @@ public partial class MainWindow : Window
     {
         while (await AutoRestartTimer.WaitForNextTickAsync())
         {
-            if (VsmSettings.AppSettings.ManagerSettingsClose)
+            if (SsmSettings.AppSettings.ManagerSettingsClose)
             {
-                if (VsmSettings.AppSettings.EnableAutoRestart)
+                if (SsmSettings.AppSettings.EnableAutoRestart)
                 {
-                    ShowLogMsg($"重载自动重启时间，重启时间为每日的 {VsmSettings.AppSettings.AutoRestartHour} 时 {VsmSettings.AppSettings.AutoRestartMin} 分 {VsmSettings.AppSettings.AutoRestartSec} 秒。", Brushes.Yellow);
-                    VsmSettings.AppSettings.ManagerSettingsClose = false;
+                    ShowLogMsg($"重载自动重启时间，重启时间为每日的 {SsmSettings.AppSettings.AutoRestartHour} 时 {SsmSettings.AppSettings.AutoRestartMin} 分 {SsmSettings.AppSettings.AutoRestartSec} 秒。", Brushes.Yellow);
+                    SsmSettings.AppSettings.ManagerSettingsClose = false;
                 }
             }
             bool timetoRestart = await CheckForRestart();
-            if (timetoRestart == true && VsmSettings.Servers.Count > 0)
+            if (timetoRestart == true && SsmSettings.Servers.Count > 0)
                 AutoRestart();
         }
     }
@@ -1008,7 +1047,7 @@ public partial class MainWindow : Window
         while (await AutoUpdateTimer.WaitForNextTickAsync())
         {
             bool foundUpdate = await CheckForUpdate();
-            if (foundUpdate == true && VsmSettings.Servers.Count > 0)
+            if (foundUpdate == true && SsmSettings.Servers.Count > 0)
                 AutoUpdate();
         }
     }
@@ -1016,9 +1055,9 @@ public partial class MainWindow : Window
     private async Task<bool> CheckForRestart()
     {
         bool timetoRestart = false;
-        if (DateTime.Now.Hour == VsmSettings.AppSettings.AutoRestartHour &&
-                DateTime.Now.Minute == VsmSettings.AppSettings.AutoRestartMin &&
-                    DateTime.Now.Second == VsmSettings.AppSettings.AutoRestartSec)
+        if (DateTime.Now.Hour == SsmSettings.AppSettings.AutoRestartHour &&
+                DateTime.Now.Minute == SsmSettings.AppSettings.AutoRestartMin &&
+                    DateTime.Now.Second == SsmSettings.AppSettings.AutoRestartSec)
         {
             AutoRestart();
             //ShowLogMsg("自动重启中", Brushes.Yellow);
@@ -1031,7 +1070,7 @@ public partial class MainWindow : Window
         List<Task> serverTasks = new List<Task>();
         List<Server> runningServers = new List<Server>();
 
-        foreach (Server server in VsmSettings.Servers)
+        foreach (Server server in SsmSettings.Servers)
         {
             if (server.Runtime.State == ServerRuntime.ServerState.运行中)
             {
@@ -1043,7 +1082,7 @@ public partial class MainWindow : Window
 
         if (runningServers.Count > 0)
         {
-            //SendDiscordMessage(VsmSettings.WebhookSettings.UpdateWait);
+            //SendDiscordMessage(SsmSettings.WebhookSettings.UpdateWait);
             await Task.Delay(TimeSpan.FromSeconds(0));
         }
         else
@@ -1063,10 +1102,10 @@ public partial class MainWindow : Window
 
     private void SendDiscordMessage(string message)
     {
-        if (VsmSettings.WebhookSettings.Enabled == false || message == "")
+        if (SsmSettings.WebhookSettings.Enabled == false || message == "")
             return;
 
-        if (VsmSettings.WebhookSettings.URL == "")
+        if (SsmSettings.WebhookSettings.URL == "")
         {
             //ShowLogMsg("Discord webhook尝试发送消息，但URL未定义。", Brushes.Yellow);
             return;
@@ -1074,7 +1113,7 @@ public partial class MainWindow : Window
 
         if (DiscordSender.WebHook == null)
         {
-            DiscordSender.WebHook = VsmSettings.WebhookSettings.URL;
+            DiscordSender.WebHook = SsmSettings.WebhookSettings.URL;
         }
 
         DiscordSender.SendMessage(message);
@@ -1101,7 +1140,7 @@ public partial class MainWindow : Window
             File.Delete(workingDir + @"\steamcmd.zip");
         }
 
-        ShowLogMsg("正在获取V Rising Dedicated Server应用信息。", Brushes.Lime);
+        ShowLogMsg("正在获取Soulmask Dedicated Server应用信息。", Brushes.Lime);
         await CheckForUpdate();
 
         return true;
@@ -1111,14 +1150,14 @@ public partial class MainWindow : Window
     {
         if (server.Runtime.State == ServerRuntime.ServerState.更新中)
         {
-            ShowLogMsg($"服务器 {server.vsmServerName} 正在更新中，尝试终止现有SteamCMD进程...", Brushes.Yellow);
+            ShowLogMsg($"服务器 {server.ssmServerName} 正在更新中，尝试终止现有SteamCMD进程...", Brushes.Yellow);
             KillAllSteamcmdProcesses();
             server.Runtime.State = ServerRuntime.ServerState.已停止;
             return false;
         }
         if (server.Runtime.State != ServerRuntime.ServerState.已停止)
         {
-            ShowLogMsg($"服务器 {server.vsmServerName} 状态为 {server.Runtime.State}，无法更新（仅允许已停止状态）", Brushes.Red);
+            ShowLogMsg($"服务器 {server.ssmServerName} 状态为 {server.Runtime.State}，无法更新（仅允许已停止状态）", Brushes.Red);
             return false;
         }
         server.Runtime.State = ServerRuntime.ServerState.更新中;
@@ -1138,7 +1177,7 @@ public partial class MainWindow : Window
 
         if (server.Runtime.Process != null && !server.Runtime.Process.HasExited)
         {
-            ShowLogMsg($"服务器 {server.vsmServerName} 仍在运行中，无法更新", Brushes.Yellow);
+            ShowLogMsg($"服务器 {server.ssmServerName} 仍在运行中，无法更新", Brushes.Yellow);
             server.Runtime.State = ServerRuntime.ServerState.已停止;
             return false;
         }
@@ -1175,13 +1214,13 @@ public partial class MainWindow : Window
         bool isNewInstall = !Directory.EnumerateFiles(server.Path).Any();
         string action = isNewInstall ? "下载" : "更新";
 
-        ShowLogMsg($"正在{action}游戏服务器：{server.vsmServerName}，请等待...", Brushes.Lime);
+        ShowLogMsg($"正在{action}游戏服务器：{server.ssmServerName}，请等待...", Brushes.Lime);
         //ShowLogMsg($"若{action}成功但启动失败，请到设置中开启“显示SteamCMD窗口”", Brushes.Gray);
 
-        if (VsmSettings.AppSettings == null)
+        if (SsmSettings.AppSettings == null)
         {
             ShowLogMsg("警告：应用设置未初始化，使用默认值", Brushes.Yellow);
-            VsmSettings.AppSettings = new AppSettings();
+            SsmSettings.AppSettings = new AppSettings();
         }
 
         string[] installScript = {
@@ -1209,7 +1248,7 @@ public partial class MainWindow : Window
                 {
                     FileName = steamCmdPath,
                     Arguments = parameters,
-                    CreateNoWindow = !VsmSettings.AppSettings.ShowSteamWindow,
+                    CreateNoWindow = !SsmSettings.AppSettings.ShowSteamWindow,
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -1262,7 +1301,7 @@ public partial class MainWindow : Window
             {
                 Dispatcher.Invoke(() =>
                 {
-                    ShowLogMsg($"{action}成功：{server.vsmServerName}", Brushes.Lime);
+                    ShowLogMsg($"{action}成功：{server.ssmServerName}", Brushes.Lime);
                     LogTextBox.Text = $"{action}完成！";
                 });
                 server.Runtime.State = ServerRuntime.ServerState.已停止;
@@ -1335,70 +1374,86 @@ public partial class MainWindow : Window
     {
         if (server.Runtime.Process != null)
         {
-            ShowLogMsg($"错误：{server.vsmServerName} 已在运行中", Brushes.Red);
+            ShowLogMsg($"错误：{server.ssmServerName} 已在运行中", Brushes.Red);
             return false;
         }
 
         try
         {
-            MainSettings.Save(VsmSettings);
-            MainSettings.LoadManagerSettings();
+            //SsmSettings = MainSettings.LoadManagerSettings();
+            string serverSettingsPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
+            string jsonString = File.ReadAllText(serverSettingsPath);
+            ServerSettings jsonObject = JsonConvert.DeserializeObject<ServerSettings>(jsonString);
 
-            ShowLogMsg($"启动服务器：{server.vsmServerName}{(server.Runtime.RestartAttempts > 0 ? $" 尝试 {server.Runtime.RestartAttempts}/3" : "")}", Brushes.Lime);
+            // 找到当前启动的服务器的最新配置
+            server = SsmSettings.Servers.FirstOrDefault(s => s.ssmServerName == server.ssmServerName) ?? server;
 
-            // 等待服务器初始化
-            await Task.Delay(1000);
+            ShowLogMsg($"启动服务器：{server.ssmServerName}{(server.Runtime.RestartAttempts > 0 ? $" 尝试 {server.Runtime.RestartAttempts}/3" : "")}", Brushes.Lime);
 
             string serverExePath = Path.Combine(server.Path, "StartServer.bat");
-            string map = server.ServerMap == 0 ? "Level01_Main" : "DLC_Level01_Main";
-            string crossServerMode = server.CrossServer;
+            string crossServerMode = "";
             string plusContent = "";
+            string pvpMode = $"{(jsonObject.PVP == true ? " -pvp" : " -pve")}";
+            string psw = "";
+            string adminpsw = "";
+            string reconSettings = "";
 
             if (!File.Exists(serverExePath))
             {
+
                 ShowLogMsg("错误：StartServer.bat", Brushes.Red);
                 return false;
             }
 
-            if (VsmSettings.WebhookSettings.Enabled && !string.IsNullOrEmpty(server.WebhookMessages.StartServer) && server.WebhookMessages.Enabled)
+            if (SsmSettings.WebhookSettings.Enabled && !string.IsNullOrEmpty(server.WebhookMessages.StartServer) && server.WebhookMessages.Enabled)
             {
                 SendDiscordMessage(server.WebhookMessages.StartServer);
             }
             
-            if(crossServerMode != "None")
+            if(jsonObject.ClusterMode != 0)
             {
-                plusContent = $" -serverid{++serveridIndex} {crossServerMode} ";
+                if (jsonObject.ClusterMode == 1)
+                    crossServerMode = $" -mainserverport={jsonObject.Port}";
+                else if (jsonObject.ClusterMode == 2)
+                {
+                    
+                    crossServerMode = $" -clientserverconnect={jsonObject.PublicIP}:{jsonObject.MainPort}";
+                }
+                plusContent = $" -serverid={++serveridIndex}{crossServerMode}";
             }
+            if (jsonObject.Password != "")
+                psw = $" -PSW={jsonObject.Password}";
 
-            if (!server.FirstStart)
-            {
+            if (jsonObject.GMPassword != "")
+                adminpsw = $" -adminpsw={jsonObject.GMPassword}";
+
+            //if (!server.FirstStart)
+            //{
                 try
                 {
-                    int mapIndex = server.ServerMap;
-                    string batContent = $@"@echo off
+                    string batContent = 
+$@"@echo off
 pushd ""%~dp0""
-start WSServer.exe {map} -server %* -log -UTF8Output -MULTIHOME=0.0.0.0{plusContent}-EchoPort=18888 -forcepassthrough
+start WSServer.exe {jsonObject.Map} -server %* -log -UTF8Output -MULTIHOME=0.0.0.0 -EchoPort=18888 -forcepassthrough{plusContent}{pvpMode} -PORT={jsonObject.Port} -QueryPort={jsonObject.QueryPort} -MaxPlayers={jsonObject.MaxPlayers} -saving={jsonObject.Saving} -backup={jsonObject.Backup} -backupinterval={jsonObject.AutoSaveInterval}{reconSettings}{psw}{adminpsw} -mod=""{jsonObject.Mods}""
 popd
 exit /B";
-
-                    string path = Path.Combine(server.Path, "StartServer.bat");
-
-                    File.WriteAllText(path, batContent, System.Text.Encoding.UTF8);
+                    File.WriteAllText(serverExePath, batContent, System.Text.Encoding.UTF8);
+                    await Task.Delay(1000);
 
                     //ShowLogMsg("StartServer.bat 已生成！\n路径：" + path, Brushes.Yellow);
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show("生成失败：" + ex.Message);
+                    //MessageBox.Show("生成失败：" + ex.Message);
                 }
-            }
+            //}
 
             Process.Start(new ProcessStartInfo
             {
                 FileName = serverExePath,
                 UseShellExecute = true
             });
-            ShowLogMsg("等待服务器窗口启动...", Brushes.Lime);
+            ShowLogMsg("等待服务器窗口启动...", Brushes.Gray);
 
             // 等待真正的服务器窗口出现（最多等15秒）
             int realPid = -1;
@@ -1426,16 +1481,19 @@ exit /B";
             server.Runtime.Pid = realPid;
             server.Runtime.State = ServerRuntime.ServerState.运行中;
             server.Runtime.UserStopped = false;
+            //server.FirstStart = false;
 
             //ShowLogMsg($"启动成功！服务器PID：{realPid}", Brushes.AliceBlue);
-            ShowLogMsg($"启动完成：{server.vsmServerName} | {(server.ServerMap == 0 ? "云雾之森" : "金色浮沙")}", Brushes.Lime);
+            ShowLogMsg($"启动完成：{server.ssmServerName} | {(jsonObject.Map == "Level01_Main" ? "云雾之森" : "金色浮沙")}", Brushes.Lime);
+
+            StartBackupCleanTimer(server, jsonObject.AutoCleanInterval, jsonObject.AutoSaveCount);
 
             if (server.RunWithoutWindow)
             {
                 HideWindow(realServerProcess.MainWindowHandle);
             }
-            server.FirstStart = false;
-            MainSettings.Save(VsmSettings);
+            //server.FirstStart = false;
+            MainSettings.Save(SsmSettings);
             return true;
         }
         catch (Exception ex)
@@ -1507,6 +1565,7 @@ exit /B";
 
     private async Task SendRconRestartMessage(Server server)
     {
+        ServerSettings serverSettings = ServerSettingsEditor.LoadServerSettings(server.Path);
         RCONClient = new()
         {
             UseUtf8 = true
@@ -1529,11 +1588,11 @@ exit /B";
         {
             if (state == RemoteConClient.ConnectionStateChange.Connected)
             {
-                RCONClient.Authenticate(server.RconServerSettings.Password);
+                RCONClient.Authenticate(serverSettings.Rcon.Password);
             }
         };
 
-        RCONClient.Connect(server.RconServerSettings.IPAddress, int.Parse(server.RconServerSettings.Port));
+        RCONClient.Connect(serverSettings.PublicIP, serverSettings.Rcon.Port);
         await Task.Delay(TimeSpan.FromSeconds(3));
         RCONClient.Disconnect();
     }
@@ -1542,12 +1601,12 @@ exit /B";
     {
         int foundServers = 0;
 
-        Process[] serverProcesses = Process.GetProcessesByName("vrisingserver");
+        Process[] serverProcesses = Process.GetProcessesByName("WSServer.exe");
         foreach (Process process in serverProcesses)
         {
-            foreach (Server server in VsmSettings.Servers)
+            foreach (Server server in SsmSettings.Servers)
             {
-                if (process.MainModule.FileName == server.Path + @"\VRisingServer.exe")
+                if (process.MainModule.FileName == server.Path + @"\WS\Binaries\Win64\WSServer-Win64-Shipping.exe")
                 {
                     server.Runtime.State = ServerRuntime.ServerState.运行中;
                     process.EnableRaisingEvents = true;
@@ -1558,7 +1617,7 @@ exit /B";
             }
         }
 
-        foreach (Server server in VsmSettings.Servers)
+        foreach (Server server in SsmSettings.Servers)
         {
             if (server.AutoStart == true && server.Runtime.State == ServerRuntime.ServerState.已停止)
             {
@@ -1574,7 +1633,7 @@ exit /B";
 
     private async void AutoUpdate()
     {
-        SendDiscordMessage(VsmSettings.WebhookSettings.UpdateFound);
+        SendDiscordMessage(SsmSettings.WebhookSettings.UpdateFound);
 
         if (!File.Exists(Directory.GetCurrentDirectory() + @"\SteamCMD\steamcmd.exe"))
         {
@@ -1584,7 +1643,7 @@ exit /B";
         List<Task> serverTasks = new List<Task>();
         List<Server> runningServers = new List<Server>();
 
-        foreach (Server server in VsmSettings.Servers)
+        foreach (Server server in SsmSettings.Servers)
         {
             if (server.Runtime.State == ServerRuntime.ServerState.运行中)
             {
@@ -1594,15 +1653,16 @@ exit /B";
 
         foreach (Server server in runningServers)
         {
-            if (server.RconServerSettings.Enabled == true)
+            ServerSettings serverSettings = ServerSettingsEditor.LoadServerSettings(server.Path);
+            if (serverSettings.Rcon.Enabled == true)
             {
                 await SendRconRestartMessage(server);
             }
         }
 
-        if (VsmSettings.WebhookSettings.Enabled == true && VsmSettings.WebhookSettings.URL != "" && runningServers.Count > 0)
+        if (SsmSettings.WebhookSettings.Enabled == true && SsmSettings.WebhookSettings.URL != "" && runningServers.Count > 0)
         {
-            SendDiscordMessage(VsmSettings.WebhookSettings.UpdateWait);
+            SendDiscordMessage(SsmSettings.WebhookSettings.UpdateWait);
 #if DEBUG
             await Task.Delay(TimeSpan.FromSeconds(10));
 #else
@@ -1615,12 +1675,12 @@ exit /B";
             serverTasks.Add(StopServer(server));
         }
 
-        ShowLogMsg($"正在自动更新 {VsmSettings.Servers.Count} 个服务器。" + ((runningServers.Count > 0) ? $"在此之前即将关闭 {runningServers.Count} 个服务器。" : ""), Brushes.Yellow);
+        ShowLogMsg($"正在自动更新 {SsmSettings.Servers.Count} 个服务器。" + ((runningServers.Count > 0) ? $"在此之前即将关闭 {runningServers.Count} 个服务器。" : ""), Brushes.Yellow);
 
         await Task.WhenAll(serverTasks.ToArray());
         serverTasks.Clear();
 
-        foreach (Server server in VsmSettings.Servers)
+        foreach (Server server in SsmSettings.Servers)
         {
             await UpdateGame(server);
         }
@@ -1638,19 +1698,18 @@ exit /B";
     {
         if (server.Runtime.Process == null || server.Runtime.Process.HasExited)
         {
-            ShowLogMsg($"服务器 {server.vsmServerName} 未运行或已退出", Brushes.Yellow);
+            ShowLogMsg($"服务器 {server.ssmServerName} 未运行或已退出", Brushes.Yellow);
             server.Runtime.Process = null;
             return true;
         }
 
         // 发送关闭通知
-        if (VsmSettings.WebhookSettings.Enabled && !string.IsNullOrEmpty(server.WebhookMessages.StopServer) && server.WebhookMessages.Enabled)
+        if (SsmSettings.WebhookSettings.Enabled && !string.IsNullOrEmpty(server.WebhookMessages.StopServer) && server.WebhookMessages.Enabled)
         {
             SendDiscordMessage(server.WebhookMessages.StopServer);
         }
 
         server.Runtime.UserStopped = true;
-        //ShowLogMsg($"正在关闭服务器 {server.vsmServerName}...", Brushes.Yellow);
 
         try
         {
@@ -1658,9 +1717,14 @@ exit /B";
             Process process = Process.GetProcessById(processId);
             if (process != null && !process.HasExited)
             {
-                SendCtrlC(process);
-                //process.Kill();
-                await process.WaitForExitAsync();
+                bool gracefulShutdown = await TryGracefulShutdownAsync(process, timeoutSeconds: 90);
+                if (!gracefulShutdown)
+                {
+                    //ShowLogMsg($"服务器 {server.ssmServerName} 未能在30秒内响应，尝试强制关闭...", Brushes.Yellow);
+                    //process.Kill();
+                    //using var killCts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+                    //await process.WaitForExitAsync(killCts.Token);
+                }
                 server.Runtime.State = ServerRuntime.ServerState.已停止;
                 server.Runtime.Process = null;
                 return true;
@@ -1669,36 +1733,97 @@ exit /B";
         }
         catch (Exception ex)
         {
-            ShowLogMsg($"服务器 {server.vsmServerName} 关闭失败：{ex.Message}", Brushes.Yellow);
             return false;
         }
     }
 
-    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    /// <summary>
+    /// 尝试优雅地关闭进程
+    /// </summary>
+    private async Task<bool> TryGracefulShutdownAsync(Process process, int timeoutSeconds)
+    {
+        if (process == null || process.HasExited)
+            return true;
+
+        process.EnableRaisingEvents = true;
+        var tcs = new TaskCompletionSource<bool>();
+        process.Exited += (s, e) =>
+        {
+            tcs.TrySetResult(true);
+        };
+
+        if (process.HasExited)
+            return true;
+
+        FocusWindowAndSendCtrlC(process);
+
+        //SendCtrlC(process);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        try
+        {
+            await tcs.Task.WaitAsync(cts.Token);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern bool AttachConsole(uint dwProcessId);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool FreeConsole();
+
+    [DllImport("kernel32.dll")]
+    private static extern bool SetConsoleCtrlHandler(ConsoleCtrlDelegate handler, bool add);
+
+    private delegate bool ConsoleCtrlDelegate(uint ctrlType);
+
+    [DllImport("kernel32.dll")]
     private static extern bool GenerateConsoleCtrlEvent(uint dwCtrlEvent, uint dwProcessGroupId);
 
-    public void SendCtrlC(Process process)
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    private const int SW_RESTORE = 9;
+
+    public void FocusWindowAndSendCtrlC(Process targetProcess)
     {
-        if (process == null || process.HasExited) return;
+        if (targetProcess == null || targetProcess.HasExited)
+            return;
 
-        // 发送Ctrl+C信号（需进程属于当前进程组，且未禁用Ctrl+C处理）
-        GenerateConsoleCtrlEvent(0, (uint)process.Id); // 0 = CTRL_C_EVENT
+        IntPtr targetHwnd = targetProcess.MainWindowHandle;
+        if (targetHwnd == IntPtr.Zero)
+            return;
 
-        // 等待退出
-        if (!process.WaitForExit(5000))
-            process.Kill();
+        IntPtr mainWindowHandle = new System.Windows.Interop.WindowInteropHelper(Application.Current.MainWindow).Handle;
+
+        try
+        {
+            ShowWindow(targetHwnd, SW_RESTORE);
+            SetForegroundWindow(targetHwnd);
+            Thread.Sleep(100);
+            System.Windows.Forms.SendKeys.SendWait("^c");
+        }
+        finally
+        {
+            ShowWindow(mainWindowHandle, SW_RESTORE);
+            SetForegroundWindow(mainWindowHandle);
+        }
     }
 
     private async Task<bool> RemoveServer(Server server)
     {
-        int serverIndex = VsmSettings.Servers.IndexOf(server);
+        int serverIndex = SsmSettings.Servers.IndexOf(server);
         string workingDir = Directory.GetCurrentDirectory();
-        string serverName = server.vsmServerName.Replace(" ", "_");
+        string serverName = server.ssmServerName.Replace(" ", "_");
 
         bool success;
         ContentDialog yesNoDialog = new()
         {
-            Content = $"确认要移除服务器 {server.vsmServerName}？\n此动作将永久移除该服务器及其文件。",
+            Content = $"确认要移除服务器 {server.ssmServerName}？\n此动作将永久移除该服务器及其文件。",
             PrimaryButtonText = "是",
             SecondaryButtonText = "否"
         };
@@ -1726,7 +1851,7 @@ exit /B";
                     ZipFile.CreateFromDirectory(server.Path + @"\SaveData\", workingDir + @"\Backups\" + serverName + "_Bak.zip");
                 }
             }
-            VsmSettings.Servers.RemoveAt(serverIndex);
+            SsmSettings.Servers.RemoveAt(serverIndex);
             if (Directory.Exists(server.Path))
                 Directory.Delete(server.Path, true);
             success = true;
@@ -1747,34 +1872,34 @@ exit /B";
 
         var version = jsonNode!["data"]["3017310"]["depots"]["branches"]["public"]["timeupdated"]!.ToString();
 
-        if (version == VsmSettings.AppSettings.LastUpdateTimeUNIX)
+        if (version == SsmSettings.AppSettings.LastUpdateTimeUNIX)
         {
-            VsmSettings.AppSettings.LastUpdateTimeUNIX = version;
+            SsmSettings.AppSettings.LastUpdateTimeUNIX = version;
             foundUpdate = false;
-            if (VsmSettings.AppSettings.LastUpdateTimeUNIX != "")
-                VsmSettings.AppSettings.LastUpdateTime = "服务器最近更新的时间：" + DateTimeOffset.FromUnixTimeSeconds(long.Parse(VsmSettings.AppSettings.LastUpdateTimeUNIX)).DateTime.ToString();
+            if (SsmSettings.AppSettings.LastUpdateTimeUNIX != "")
+                SsmSettings.AppSettings.LastUpdateTime = "服务器最近更新的时间：" + DateTimeOffset.FromUnixTimeSeconds(long.Parse(SsmSettings.AppSettings.LastUpdateTimeUNIX)).DateTime.ToString();
 
-            MainSettings.Save(VsmSettings);
+            MainSettings.Save(SsmSettings);
             ShowLogMsg($"当前游戏服务器已是最新版本。", Brushes.Lime);
             return foundUpdate;
         }
 
-        if (version != VsmSettings.AppSettings.LastUpdateTimeUNIX)
+        if (version != SsmSettings.AppSettings.LastUpdateTimeUNIX)
         {
-            VsmSettings.AppSettings.LastUpdateTimeUNIX = version;
+            SsmSettings.AppSettings.LastUpdateTimeUNIX = version;
             foundUpdate = true;
         }
 
-        if (VsmSettings.AppSettings.LastUpdateTimeUNIX == "")
+        if (SsmSettings.AppSettings.LastUpdateTimeUNIX == "")
         {
-            VsmSettings.AppSettings.LastUpdateTimeUNIX = version;
+            SsmSettings.AppSettings.LastUpdateTimeUNIX = version;
             foundUpdate = true;
         }
 
-        if (VsmSettings.AppSettings.LastUpdateTimeUNIX != "")
-            VsmSettings.AppSettings.LastUpdateTime = "服务器上一次更新的时间：" + DateTimeOffset.FromUnixTimeSeconds(long.Parse(VsmSettings.AppSettings.LastUpdateTimeUNIX)).DateTime.ToString();
+        if (SsmSettings.AppSettings.LastUpdateTimeUNIX != "")
+            SsmSettings.AppSettings.LastUpdateTime = "服务器上一次更新的时间：" + DateTimeOffset.FromUnixTimeSeconds(long.Parse(SsmSettings.AppSettings.LastUpdateTimeUNIX)).DateTime.ToString();
 
-        MainSettings.Save(VsmSettings);
+        MainSettings.Save(SsmSettings);
         return foundUpdate;
     }
 
@@ -1786,68 +1911,43 @@ exit /B";
             ShowLogMsg($"传入的服务器为空！", Brushes.Red);
             return;
         }
-
         string logPath = Path.Combine(server.Path, "WS", "Saved", "Logs", "WS.log");
         
-        string ipAddress = "";
-        string steamID = "";
-        int foundVariables = 0;
-        bool serverAsynchronousShuttingDown = false;
-
         try
         {
             // 首次启动时检查文件是否存在
             if (!server.LogFileExists)
             {
-                //if (!File.Exists(logPath))
-                //{
-                //    ShowLogMsg($"[{server.vsmServerName}] 日志文件不存在，请确保服务器已成功启动过一次", Brushes.Yellow);
-                //    await Task.Delay(5000);
-                //    if (!File.Exists(logPath))
-                //    {
-                //        ShowLogMsg($"[{server.vsmServerName}] 日志文件仍不存在，请手动启动服务器一次", Brushes.Red);
-                //        return;
-                //    }
-                //}
+                if (!File.Exists(logPath))
+                {
+                    ShowLogMsg($"[{server.ssmServerName}] 日志文件不存在，请确保服务器已成功启动过一次", Brushes.Yellow);
+                    await Task.Delay(5000);
+                    if (!File.Exists(logPath))
+                    {
+                        ShowLogMsg($"[{server.ssmServerName}] 日志文件仍不存在，请手动启动服务器一次", Brushes.Red);
+                        return;
+                    }
+                }
 
-                // 文件存在，设置标志位
-                //server.LogFileExists = true;
-                //server.FirstStart = false;
-                //MainSettings.Save(VsmSettings);
-
-                ShowLogMsg($"[{server.vsmServerName}] 已检测到日志文件：{logPath}", Brushes.Green);
+                //文件存在，设置标志位
+                server.LogFileExists = true;
+                ShowLogMsg($"[{server.ssmServerName}] 已检测到日志文件：{logPath}", Brushes.Green);
             }
-
 
             using FileStream fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using StreamReader sr = new StreamReader(fs);
 
-            // 持续读取日志
-            while (foundVariables < 3 && server.Runtime.Process != null)
+            while (server.FirstStart)
             {
                 string line = await sr.ReadLineAsync();
                 if (line != null)
                 {
-                    if (line.Contains("SteamNetworking - Successfully logged in with the SteamGameServer API. SteamID: "))
+                    if (line.Contains("Game Engine Initialized"))
                     {
-                        steamID = line.Split("SteamNetworking - Successfully logged in with the SteamGameServer API. SteamID: ")[1];
-                        foundVariables++;
-                        //ShowLogMsg(foundVariables.ToString(), Brushes.Cyan);
-                        //ShowLogMsg(steamID.ToString(), Brushes.Cyan);
-                    }
-                    if (line.Contains("PlatformSystemBase - OnPolicyResponse - Public IP: "))
-                    {
-                        ipAddress = line.Split("PlatformSystemBase - OnPolicyResponse - Public IP: ")[1];
-                        foundVariables++;
-                        //ShowLogMsg(foundVariables.ToString(), Brushes.Cyan);
-                        //ShowLogMsg(ipAddress, Brushes.Cyan);
-                    }
-                    if (line.Contains("Shutting down Asynchronous Streaming"))
-                    {
-                        serverAsynchronousShuttingDown = true;
-                        foundVariables++;
-                        //ShowLogMsg(foundVariables.ToString(), Brushes.Cyan);
-                        //ShowLogMsg(serverAsynchronousShuttingDown.ToString(), Brushes.Cyan);
+                        //ShowLogMsg("首次启动服务器，正在关闭以进行配置", Brushes.Yellow);
+                        server.FirstStart = false;
+
+                        //await StopServer(server);
                     }
                 }
                 else
@@ -1858,333 +1958,22 @@ exit /B";
                 }
             }
 
-            if (foundVariables == 3)
-            {
-                ShowLogMsg($"· {server.vsmServerName} Public IP：{ipAddress}", Brushes.Orange);
-                ShowLogMsg($"· {server.vsmServerName} Game Server SteamID: {steamID}", Brushes.Orange);
-                // 发送服务器就绪通知（如果配置）
-                if (VsmSettings.WebhookSettings.Enabled && server.WebhookMessages.Enabled)
-                {
-                    List<string> toSend = new()
-                {
-                    !string.IsNullOrEmpty(server.WebhookMessages.ServerReady) ? server.WebhookMessages.ServerReady : "",
-                    server.WebhookMessages.BroadcastIP ? $"Public IP: {ipAddress}" : "",
-                    server.WebhookMessages.BroadcastSteamID ? $"SteamID: {steamID}" : ""
-                };
-
-                    if (toSend.Any(x => !string.IsNullOrEmpty(x)))
-                    {
-                        SendDiscordMessage(string.Join("\n", toSend));
-                    }
-                }
-            }
-
-
+            MainSettings.Save(SsmSettings);
             // 移动到文件末尾，只读取新内容
             fs.Seek(0, SeekOrigin.End);
             long initialPosition = fs.Position;
-
-            // 初始化玩家更新定时器
-            //InitializePlayerDataManager(server);
-            //InitializePlayerUpdateTimer();
-            //InitializeServerStateListener();
-            await MonitorPlayerActivity(server, sr, fs, initialPosition);
         }
         catch (FileNotFoundException ex)
         {
             server.LogFileExists = false;
-            ShowLogMsg($"[{server.vsmServerName}] 日志文件已被删除，请重启服务器: {ex.Message}", Brushes.Red);
+            ShowLogMsg($"[{server.ssmServerName}] 日志文件已被删除，请重启服务器: {ex.Message}", Brushes.Red);
         }
         catch (Exception ex)
         {
-            ShowLogMsg($"[{server.vsmServerName}] 日志处理错误：{ex.Message}", Brushes.Red);
+            ShowLogMsg($"[{server.ssmServerName}] 日志处理错误：{ex.Message}", Brushes.Red);
         }
 
     }
-
-    // 监控玩家活动
-    private async Task MonitorPlayerActivity(Server server, StreamReader sr, FileStream fs, long initialPosition)
-    {
-        fs.Seek(0, SeekOrigin.Current);
-        long lastPosition = fs.Position;
-        while (server.Runtime.Process != null)
-        {
-            try
-            {
-                // 检查文件是否被截断(例如日志滚动)
-                if (fs.Length < lastPosition)
-                {
-                    //ShowLogMsg("日志文件被重置，重新开始监控", Brushes.Yellow);
-                    fs.Seek(0, SeekOrigin.Begin);
-                    lastPosition = 0;
-                }
-                else if (fs.Length > lastPosition)
-                {
-                    // 有新内容可读取
-                    fs.Seek(lastPosition, SeekOrigin.Begin);
-
-                    string line;
-                    while ((line = await sr.ReadLineAsync()) != null)
-                    {
-                        if (!string.IsNullOrWhiteSpace(line))
-                        {
-                            //ShowLogMsg($"处理玩家事件: {line}", Brushes.Orange);
-                            ProcessPlayerEvent(line);
-                            lastPosition = fs.Position;
-                        }
-                    }
-                }
-                else
-                {
-                    // 没有新内容，等待
-                    await Task.Delay(500);
-                }
-            }
-            catch (Exception ex)
-            {
-                ShowLogMsg($"监控玩家活动时出错: {ex.Message}", Brushes.Red);
-                await Task.Delay(2000);
-
-                // 重置流位置，避免卡死
-                fs.Seek(lastPosition, SeekOrigin.Begin);
-            }
-        }
-    }
-
-    private void ProcessPlayerEvent(string logLine)
-    {
-        //if (logLine.Contains("User") && logLine.Contains("begun its spawn fadeout"))
-        //{
-        //    HandlePlayerCreate(logLine);
-        //}
-        //else if (logLine.Contains("User") && logLine.Contains("connected as ID"))
-        //{
-        //    HandlePlayerConnect(logLine);
-        //}
-        //else if (logLine.Contains("User") && logLine.Contains("disconnected"))
-        //{
-        //    HandlePlayerDisconnect(logLine);
-        //}
-        //else if (logLine.Contains("NetEndPoint") && logLine.Contains("IsAdmin"))
-        //{
-        //    HandleAdminGrant(logLine);
-        //}
-    }
-
-    private void HandlePlayerCreate(string logLine)
-    {
-        try
-        {
-            string steamIdStr = ExtractValue(logLine, "User ", " (");
-            string characterName = ExtractValue(logLine, "Character: ", ") has begun");
-
-            if (string.IsNullOrEmpty(characterName) || string.IsNullOrEmpty(steamIdStr))
-            {
-                ShowLogMsg($"连接日志缺少关键信息: {logLine}", Brushes.Orange);
-                return;
-            }
-
-            if (!ulong.TryParse(steamIdStr, out ulong steamId))
-            {
-                ShowLogMsg($"无效SteamID格式: {steamIdStr}", Brushes.Red);
-                return;
-            }
-
-            if (_playerDataManager.Players.TryGetValue(steamId, out var existingPlayer))
-            {
-                if (existingPlayer != null)
-                {
-                    DateTime now = DateTime.Now;
-                    existingPlayer.IsOnline = true;
-                    existingPlayer.LoginTime = now;
-                    existingPlayer.LastStatusTime = now;
-                    existingPlayer.CharacterName = characterName;
-                    _playerDataManager?.AddOrUpdatePlayer(steamId, existingPlayer);
-                    _playerDataManager?.SaveAsync();
-                    _playerDataManager?.LoadOrCreateDataFile();
-                    PlayerDataGrid.ItemsSource = _playerDataManager?.Players.Values;
-                }
-                ShowLogMsg($"玩家创建角色: {characterName} (SteamID: {steamId})", Brushes.Green);
-            }
-
-
-            if (VsmSettings.WebhookSettings.Enabled)
-            {
-                //SendDiscordMessage($"📥 **玩家上线**\n角色: {characterName}\nSteamID: {steamId}");
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"连接处理失败: {ex.Message}", Brushes.Red);
-        }
-    }
-
-    private void HandlePlayerConnect(string logLine)
-    {
-        try
-        {
-            string characterName = ExtractValue(logLine, "Character: '", "' connected");
-            string netEndpoint = ExtractValue(logLine, "{Steam ", "}") ?? "";
-            string steamIdStr = ExtractValue(logLine, "}' '", "', approvedUserIndex");
-
-            if (string.IsNullOrEmpty(characterName))
-            {
-                ShowLogMsg($"玩家未创建角色，等待创建角色中", Brushes.Orange);
-                characterName = "";
-            }
-
-            if (string.IsNullOrEmpty(steamIdStr))
-            {
-                ShowLogMsg($"连接日志缺少关键信息: {logLine}", Brushes.Orange);
-                return;
-            }
-
-            if (!ulong.TryParse(steamIdStr, out ulong steamId))
-            {
-                ShowLogMsg($"无效SteamID格式: {steamIdStr}", Brushes.Red);
-                return;
-            }
-
-            DateTime now = DateTime.Now;
-
-            var player = new VRisingPlayerInfo
-            {
-                SteamId = steamId,
-                CharacterName = characterName,
-                NetEndPoint = netEndpoint,
-                IsOnline = true,
-                LoginTime = now,
-                LastStatusTime = now,
-                IsAuthenticated = true
-            };
-
-            //if (_playerDataManager.Players.TryGetValue(steamId, out var existingPlayer))
-            //{
-            //    // 累加历史时长
-            //    if (existingPlayer.IsOnline && existingPlayer.LoginTime.HasValue)
-            //    {
-            //        var lastSession = now - existingPlayer.LoginTime.Value;
-            //        existingPlayer.TotalPlayTime += lastSession;
-            //        ShowLogMsg($"玩家重连: {characterName} (SteamID: {steamId})，上次时长: {FormatTimeSpan(lastSession)}", Brushes.Cyan);
-            //    }
-            //    player.TotalPlayTime = existingPlayer.TotalPlayTime;
-            //    player.IsAdmin = existingPlayer.IsAdmin;
-            //}
-
-            _connectedPlayers[steamId] = player;
-            _netEndpointToPlayer[netEndpoint] = player;
-            _playerDataManager?.AddOrUpdatePlayer(steamId, player);
-            _playerDataManager?.SaveAsync();
-            ShowLogMsg($"玩家连接: {characterName} (SteamID: {steamId})", Brushes.Green);
-
-            if (VsmSettings.WebhookSettings.Enabled)
-            {
-                //SendDiscordMessage($"📥 **玩家上线**\n角色: {characterName}\nSteamID: {steamId}");
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"连接处理失败: {ex.Message}", Brushes.Red);
-        }
-    }
-
-    private void HandlePlayerDisconnect(string logLine)
-    {
-        try
-        {
-            string netEndpoint = ExtractValue(logLine, "{Steam ", "}'") ?? "";
-            string reason = ExtractValue(logLine, "Reason: ", " k_") ?? "未知原因";
-            VRisingPlayerInfo player = new VRisingPlayerInfo();
-            if (string.IsNullOrEmpty(netEndpoint))
-            {
-                ShowLogMsg($"断开日志缺少NetEndpoint: {logLine}", Brushes.Orange);
-                return;
-            }
-            foreach (var playerdata in _playerDataManager.Players.Values)
-            {
-                if (!playerdata.NetEndPoint.Contains(netEndpoint))
-                {
-                    continue;
-                }
-                else
-                {
-                    player = _playerDataManager.Players.Values.FirstOrDefault(p => p.NetEndPoint.Contains(netEndpoint));
-                    if (player == null)
-                    {
-                        ShowLogMsg($"未找到匹配玩家 (NetEndpoint: {netEndpoint})", Brushes.Orange);
-                        return;
-                    }
-                    //ShowLogMsg($"玩家连接状态：{player.IsOnline.ToString()}", Brushes.Orange);
-                    break;
-                }
-            }
-
-            if (!player.IsOnline)
-            {
-                //ShowLogMsg($"重复断开事件: {player.CharacterName} (SteamID: {player.SteamId})", Brushes.Gray);
-                return;
-            }
-
-            DateTime now = DateTime.Now;
-            player.IsOnline = false;
-            player.LogoutTime = now;
-            player.SessionDuration = now - player.LoginTime;
-            player.TotalPlayTime += player.SessionDuration.Value;
-            player.LastStatusTime = now;
-            player.DisconnectReason = reason;
-            player.NetEndPoint = "";
-
-            _connectedPlayers[player.SteamId] = player;
-            _playerDataManager?.AddOrUpdatePlayer(player.SteamId, player);
-            _playerDataManager?.SaveAsync();
-            _netEndpointToPlayer.Remove(netEndpoint);
-
-            ShowLogMsg($"玩家断开: {player.CharacterName} (SteamID: {player.SteamId})\n" +
-                        $"本次时长: {FormatTimeSpan(player.SessionDuration.Value)} | 总时长: {FormatTimeSpan(player.TotalPlayTime)}",
-                            Brushes.Gray);
-
-            if (VsmSettings.WebhookSettings.Enabled)
-            {
-                //SendDiscordMessage($"📤 **玩家下线**\n角色: {player.CharacterName}\n" + $"SteamID: {player.SteamId}\n" + $"本次时长: {FormatTimeSpan(player.SessionDuration.Value)}");
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"断开处理失败: {ex.Message}", Brushes.Red);
-        }
-    }
-
-    private void HandleAdminGrant(string logLine)
-    {
-        try
-        {
-            string steamIdStr = ExtractValue(logLine, "PlatformId: ", " UserIndex:");
-            if (string.IsNullOrEmpty(steamIdStr) || !ulong.TryParse(steamIdStr, out ulong steamId))
-            {
-                ShowLogMsg($"无效管理员SteamID: {steamIdStr}", Brushes.Red);
-                return;
-            }
-
-            if (_connectedPlayers.TryGetValue(steamId, out var player))
-            {
-                bool isAdmin = _playerDataManager?.IsAdmin(steamId) ?? false;
-
-                player.IsAdmin = isAdmin;
-                player.LastStatusTime = DateTime.Now;
-                _connectedPlayers[steamId] = player;
-                _playerDataManager?.AddOrUpdatePlayer(steamId, player);
-                _playerDataManager?.SaveAsync();
-
-                string status = isAdmin ? "已确认管理员权限" : "非管理员";
-                ShowLogMsg($"{player.CharacterName} (SteamID: {steamId}): {status}", Brushes.Purple);
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"管理员授权处理失败: {ex.Message}", Brushes.Red);
-        }
-    }
-
 
     // 从日志行中提取特定值
     private string ExtractValue(string line, string startMarker, string endMarker)
@@ -2204,55 +1993,6 @@ exit /B";
         return line.Substring(startIndex, endIndex - startIndex);
     }
 
-    // 格式化时间间隔
-    private string FormatTimeSpan(TimeSpan ts)
-    {
-        if (ts.TotalHours >= 1)
-            return $"{ts.Hours}小时{ts.Minutes}分钟";
-        else
-            return $"{ts.Minutes}分钟{ts.Seconds}秒";
-    }
-
-    // 初始化玩家更新定时器
-    private void InitializePlayerUpdateTimer()
-    {
-        playerUpdateTimer = new System.Timers.Timer(5000); // 每5秒更新一次
-        //playerUpdateTimer.Elapsed += (sender, e) => UpdatePlayerStatus();
-        playerUpdateTimer.Elapsed += (sender, e) => UpdatePlayerCountText();
-        playerUpdateTimer.Start();
-    }
-
-    // 更新玩家状态
-    private void UpdatePlayerStatus()
-    {
-        try
-        {
-            _playerDataManager.Players.Clear();
-            _playerDataManager.LoadServerPlayerData();
-            int onlineCount = _playerDataManager.Players.Values.Count(p => p.IsOnline);
-
-            if (VsmSettings.WebhookSettings.Enabled && onlineCount > 0)
-            {
-                var onlinePlayers = _playerDataManager.Players.Values
-                    .Where(p => p.IsOnline && p.LoginTime.HasValue)
-                    .Select(p => $"- {p.CharacterName} (游戏时间: {FormatTimeSpan(DateTime.Now - p.LoginTime.Value)})");
-
-                var invalidPlayers = _playerDataManager.Players.Values
-                    .Where(p => p.IsOnline && !p.LoginTime.HasValue)
-                    .Select(p => $"- {p.CharacterName} (游戏时间: 未知)");
-
-                var allPlayers = onlinePlayers.Concat(invalidPlayers);
-                string playerList = string.Join("\n", allPlayers);
-
-                //SendDiscordMessage($"👥 **当前在线玩家 ({onlineCount})**\n{playerList}");
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"更新玩家状态时出错: {ex.Message}", Brushes.Orange);
-        }
-    }
-
     #region Events
     private async void ServerProcessExited(object sender, EventArgs e, Server server)
     {
@@ -2264,7 +2004,7 @@ exit /B";
 
         if (server.Runtime == null)
         {
-            ShowLogMsg($"错误：[{server.vsmServerName}] 运行时对象未初始化", Brushes.Red);
+            ShowLogMsg($"错误：[{server.ssmServerName}] 运行时对象未初始化", Brushes.Red);
             return;
         }
 
@@ -2286,33 +2026,36 @@ exit /B";
         server.Runtime.State = ServerRuntime.ServerState.已停止;
         server.Runtime.Process = null;
 
+        StopBackupCleanTimer(server);
+        ShowLogMsg($"{server.ssmServerName} 存档清理计时器已停止", Brushes.Gray);
+
         try
         {
             switch (exitCode)
             {
                 case 1:
-                    ShowLogMsg($"{server.vsmServerName} 崩溃了。", Brushes.Red);
+                    ShowLogMsg($"{server.ssmServerName} 崩溃了。", Brushes.Red);
                     break;
                 case -2147483645:
-                    ShowLogMsg($"{server.vsmServerName} 已中断（代码：-2147483645），可能是端口被占用。", Brushes.Red);
+                    ShowLogMsg($"{server.ssmServerName} 已中断（代码：-2147483645），可能是端口被占用。", Brushes.Red);
                     break;
                 default:
-                    //ShowLogMsg($"{server.vsmServerName} 已停止（退出码：{exitCode}）", Brushes.Yellow);
+                    //ShowLogMsg($"{server.ssmServerName} 已停止（退出码：{exitCode}）", Brushes.Yellow);
                     break;
             }
 
             if (server.Runtime.RestartAttempts >= 3)
             {
-                ShowLogMsg($"服务器 '{server.vsmServerName}' 已尝试重启3次失败，禁用自动重启。", Brushes.Red);
+                ShowLogMsg($"服务器 '{server.ssmServerName}' 已尝试重启3次失败，禁用自动重启。", Brushes.Red);
 
-                if (VsmSettings.WebhookSettings.Enabled &&
+                if (SsmSettings.WebhookSettings.Enabled &&
                     !string.IsNullOrEmpty(server.WebhookMessages.AttemptStart3) &&
                     server.WebhookMessages.Enabled)
                 {
                     SendDiscordMessage(server.WebhookMessages.AttemptStart3);
                 }
 
-                if (VsmSettings.AppSettings.SaveLogWhenCrash)
+                if (SsmSettings.AppSettings.SaveLogWhenCrash)
                 {
                     if (LogManager.WriteServerCrashLog(server))
                     {
@@ -2326,13 +2069,13 @@ exit /B";
                 bool restartSuccess = await StartServer(server);
                 if (restartSuccess)
                 {
-                    ShowLogMsg($"{server.vsmServerName} 重启成功，重新启用自动重启。", Brushes.Green);
+                    ShowLogMsg($"{server.ssmServerName} 重启成功，重新启用自动重启。", Brushes.Green);
                     server.AutoRestart = true;
                     server.Runtime.RestartAttempts = 0;
                 }
                 else
                 {
-                    ShowLogMsg($"{server.vsmServerName} 最后一次重启失败，请手动检查。", Brushes.Red);
+                    ShowLogMsg($"{server.ssmServerName} 最后一次重启失败，请手动检查。", Brushes.Red);
                 }
                 return;
             }
@@ -2340,16 +2083,16 @@ exit /B";
             if (server.AutoRestart && !server.Runtime.UserStopped)
             {
                 server.Runtime.RestartAttempts++;
-                ShowLogMsg($"{server.vsmServerName} 将自动重启（尝试 {server.Runtime.RestartAttempts}/3）", Brushes.Lime);
+                ShowLogMsg($"{server.ssmServerName} 将自动重启（尝试 {server.Runtime.RestartAttempts}/3）", Brushes.Lime);
 
-                if (VsmSettings.WebhookSettings.Enabled &&
+                if (SsmSettings.WebhookSettings.Enabled &&
                     !string.IsNullOrEmpty(server.WebhookMessages.ServerCrash) &&
                     server.WebhookMessages.Enabled)
                 {
                     SendDiscordMessage(server.WebhookMessages.ServerCrash);
                 }
 
-                if (VsmSettings.AppSettings.SaveLogWhenCrash)
+                if (SsmSettings.AppSettings.SaveLogWhenCrash)
                 {
                     if (LogManager.WriteServerCrashLog(server))
                     {
@@ -2363,7 +2106,7 @@ exit /B";
         }
         catch (Exception ex)
         {
-            ShowLogMsg($"[{server.vsmServerName}] 处理进程退出时出错：{ex.Message}", Brushes.Red);
+            ShowLogMsg($"[{server.ssmServerName}] 处理进程退出时出错：{ex.Message}", Brushes.Red);
         }
     }
 
@@ -2373,12 +2116,12 @@ exit /B";
         switch (e.PropertyName)
         {
             case "AutoUpdate":
-                if (VsmSettings.AppSettings.AutoUpdate == true)
+                if (SsmSettings.AppSettings.AutoUpdate == true)
                 {
 #if DEBUG
                     //AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
 #else
-//                        AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromMinutes(VsmSettings.AppSettings.AutoUpdateInterval));
+//                        AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromMinutes(SsmSettings.AppSettings.AutoUpdateInterval));
 #endif
                     //AutoUpdateLoop();
                     LookForUpdate();
@@ -2392,19 +2135,19 @@ exit /B";
                 }
                 break;
             case "AutoUpdateInterval":
-                if (VsmSettings.AppSettings.AutoUpdate == true && AutoUpdateTimer != null)
+                if (SsmSettings.AppSettings.AutoUpdate == true && AutoUpdateTimer != null)
                 {
                     AutoUpdateTimer.Dispose();
 #if DEBUG
                     AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
 #else
-//                        AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromMinutes(VsmSettings.AppSettings.AutoUpdateInterval));
+//                        AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromMinutes(SsmSettings.AppSettings.AutoUpdateInterval));
 #endif
                     AutoUpdateLoop();
                 }
                 break;
             case "DarkMode":
-                if (VsmSettings.AppSettings.DarkMode == true)
+                if (SsmSettings.AppSettings.DarkMode == true)
                 {
                     ThemeManager.Current.ApplicationTheme = ApplicationTheme.Dark;
                 }
@@ -2463,11 +2206,11 @@ exit /B";
         button.IsEnabled = false;
         try
         {
-            MainSettings.Save(VsmSettings);
+            //MainSettings.Save(SsmSettings);
             string batPath = Path.Combine(server.Path, "StartServer.bat");
             if (!File.Exists(batPath))
             {
-                ShowLogMsg($"{server.vsmServerName} 启动失败：未找到启动文件（{batPath}）", Brushes.Red);
+                ShowLogMsg($"{server.ssmServerName} 启动失败：未找到启动文件（{batPath}）", Brushes.Red);
                 return;
             }
             bool started = await StartServer(server);
@@ -2480,7 +2223,7 @@ exit /B";
         }
         catch (Exception ex)
         {
-            ShowLogMsg($"{server.vsmServerName} 启动异常：{ex.Message}", Brushes.Red);
+            ShowLogMsg($"{server.ssmServerName} 启动异常：{ex.Message}", Brushes.Red);
         }
         finally
         {
@@ -2520,11 +2263,11 @@ exit /B";
 
             if (success)
             {
-                ShowLogMsg($"服务器 {server.vsmServerName} 更新成功！", Brushes.Lime);
+                ShowLogMsg($"服务器 {server.ssmServerName} 更新成功！", Brushes.Lime);
             }
             else
             {
-                ShowLogMsg($"服务器 {server.vsmServerName} 更新失败！", Brushes.Red);
+                ShowLogMsg($"服务器 {server.ssmServerName} 更新失败！", Brushes.Red);
             }
         }
         catch (Exception ex)
@@ -2569,13 +2312,13 @@ exit /B";
                 return;
             }
 
-            ShowLogMsg($"正在停止服务器：{server.vsmServerName}", Brushes.Yellow);
+            ShowLogMsg($"正在停止服务器：{server.ssmServerName}", Brushes.Yellow);
             bool wasRunning = server.Runtime?.State == ServerRuntime.ServerState.运行中;
             bool success = await StopServer(server);
 
             if (success)
             {
-                ShowLogMsg($"已成功停止服务器：{server.vsmServerName}", Brushes.Lime);
+                ShowLogMsg($"已成功停止服务器：{server.ssmServerName}", Brushes.Lime);
             }
             else
             {
@@ -2583,7 +2326,7 @@ exit /B";
                 {
                     LogManager.WriteServerCrashLog(server);
                 }
-                ShowLogMsg($"无法停止服务器：{server.vsmServerName}", Brushes.Red);
+                ShowLogMsg($"停止服务器失败：{server.ssmServerName}", Brushes.Red);
             }
         }
         catch (Exception ex)
@@ -2619,20 +2362,20 @@ exit /B";
     private async Task<bool> RestartServer(Server server)
     {
         LogManager = new(this);
-        ShowLogMsg($"正在重启服务器：" + server.vsmServerName, Brushes.Yellow);
+        ShowLogMsg($"正在重启服务器：" + server.ssmServerName, Brushes.Yellow);
         try
         {
             bool success = await StopServer(server);
             if (success)
             {
                 if (!LogManager.WriteServerCrashLog(server))
-                    ShowLogMsg($"备份 {server.vsmServerName} 服务器日志失败", Brushes.Red);
+                    ShowLogMsg($"备份 {server.ssmServerName} 服务器日志失败", Brushes.Red);
                 else
-                    ShowLogMsg($"已备份 {server.vsmServerName} 服务器日志", Brushes.Lime);
+                    ShowLogMsg($"已备份 {server.ssmServerName} 服务器日志", Brushes.Lime);
 
-                ShowLogMsg($"正在启动服务器：{server.vsmServerName}", Brushes.Yellow);
+                ShowLogMsg($"正在启动服务器：{server.ssmServerName}", Brushes.Yellow);
 
-                MainSettings.Save(VsmSettings);
+                MainSettings.Save(SsmSettings);
                 if (File.Exists(server.Path + @"\StartServer.bat"))
                 {
                     success = await StartServer(server);
@@ -2647,7 +2390,7 @@ exit /B";
             }
             else
             {
-                ShowLogMsg($"无法停止服务器：{server.vsmServerName}", Brushes.Red);
+                ShowLogMsg($"无法停止服务器：{server.ssmServerName}", Brushes.Red);
                 LogManager.WriteServerCrashLog(server);
                 return false;
             }
@@ -2668,51 +2411,6 @@ exit /B";
             ThemeManager.Current.ApplicationTheme = ApplicationTheme.Light;
     }
 
-    private async void VoiceServices_Click(object sender, RoutedEventArgs e)
-    {
-        Server server = ((Button)sender).DataContext as Server;
-
-        if (server == null)
-        {
-            ShowLogMsg($"未找到服务器信息，请确认服务器有正常运行过至少一次", Brushes.Red);
-            return;
-        }
-
-        if (!File.Exists(server.Path + @"\SaveData\Settings\ServerVoipSettings.json"))
-        {
-            ContentDialog yesNoDialog = new ContentDialog()
-            {
-                Content = "未检测到Unity语音配置文件，是否进行配置？",
-                PrimaryButtonText = "是",
-                SecondaryButtonText = "否"
-            };
-            if (await yesNoDialog.ShowAsync() is ContentDialogResult.Primary)
-            {
-                string Json = JsonConvert.SerializeObject(VoiceServicesSettings, Formatting.Indented);
-                File.WriteAllText(server.Path + @"\SaveData\Settings\ServerVoipSettings.json", Json);
-            }
-            else
-            {
-                ShowLogMsg("用户取消本次配置语音服务", Brushes.Yellow);
-                return;
-            }
-        }
-
-        if (!Application.Current.Windows.OfType<VoiceServicesEditor>().Any())
-        {
-            if (VsmSettings.AppSettings.AutoLoadEditor == true && !(ServerTabControl.SelectedIndex == -1))
-            {
-                VoiceServicesEditor vSettingsEditor = new(VsmSettings.Servers, true, ServerTabControl.SelectedIndex);
-                vSettingsEditor.Show();
-            }
-            else
-            {
-                VoiceServicesEditor vSettingsEditor = new(VsmSettings.Servers);
-                vSettingsEditor.Show();
-            }
-        }
-    }
-
     private async void RemoveServerButton_Click(object sender, RoutedEventArgs e)
     {
         Server server = ((Button)sender).DataContext as Server;
@@ -2731,30 +2429,60 @@ exit /B";
         if (!success)
             ShowLogMsg($"删除服务器时出错，或操作已中止。", Brushes.Red);
         else
-            MainSettings.Save(VsmSettings);
+            MainSettings.Save(SsmSettings);
     }
 
     private void ServerSettingsEditorButton_Click(object sender, RoutedEventArgs e)
     {
-        var serverSettingsEditor = Application.Current.Windows.OfType<IniEditor>().FirstOrDefault();
-        if (serverSettingsEditor != null)
+        try
         {
-            serverSettingsEditor.Activate();
-            serverSettingsEditor.Topmost = true;
-            serverSettingsEditor.Topmost = false;
-        }
-        else
-        {
-            if (VsmSettings.AppSettings.AutoLoadEditor == true && !(ServerTabControl.SelectedIndex == -1))
+            var serverSettingsEditor = Application.Current.Windows.OfType<ServerSettingsEditor>().FirstOrDefault();
+
+            if (serverSettingsEditor != null)
             {
-                IniEditor sSettingsEditor = new(VsmSettings.Servers, true, ServerTabControl.SelectedIndex);
-                sSettingsEditor.Show();
+                serverSettingsEditor.Activate();
+                serverSettingsEditor.Topmost = true;
+                serverSettingsEditor.Topmost = false;
             }
             else
             {
-                IniEditor sSettingsEditor = new(VsmSettings.Servers);
-                sSettingsEditor.Show();
+                try
+                {
+                    string engineIniFilePath = Path.Combine(SsmSettings.Servers[ServerTabControl.SelectedIndex].Path, "WS", "Saved", "Config", "WindowsServer", "Engine.ini");
+                    if (!File.Exists(engineIniFilePath))
+                    {
+                        var dialog = new ContentDialog
+                        {
+                            Owner = this,
+                            Title = "服务器初始配置文件不存在",
+                            Content = "未找到服务器初始配置文件，请先启动一次服务器后再进行配置！",
+                            PrimaryButtonText = "确定",
+                        }.ShowAsync();
+                        return;
+                    }
+
+                    if (SsmSettings.AppSettings.AutoLoadEditor == true && !(ServerTabControl.SelectedIndex == -1))
+                    {
+                        ServerSettingsEditor sSettingsEditor = new(SsmSettings.Servers, true, ServerTabControl.SelectedIndex);
+                        sSettingsEditor.Show();
+                    }
+                    else
+                    {
+                        ServerSettingsEditor sSettingsEditor = new(SsmSettings.Servers);
+                        sSettingsEditor.Show();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return;
+                    ShowLogMsg($"错误：{ex}", Brushes.Red);
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            return;
+            ShowLogMsg($"错误：{ex}", Brushes.Red);
         }
     }
 
@@ -2769,14 +2497,14 @@ exit /B";
         }
         else
         {
-            if (VsmSettings.AppSettings.AutoLoadEditor == true && !(ServerTabControl.SelectedIndex == -1))
+            if (SsmSettings.AppSettings.AutoLoadEditor == true && !(ServerTabControl.SelectedIndex == -1))
             {
-                GameSettingsEditor gSettingsEditor = new(VsmSettings.Servers, true, ServerTabControl.SelectedIndex);
+                GameSettingsEditor gSettingsEditor = new(SsmSettings.Servers, true, ServerTabControl.SelectedIndex);
                 gSettingsEditor.Show();
             }
             else
             {
-                GameSettingsEditor gSettingsEditor = new(VsmSettings.Servers);
+                GameSettingsEditor gSettingsEditor = new(SsmSettings.Servers);
                 gSettingsEditor.Show();
             }
         }
@@ -2798,7 +2526,6 @@ exit /B";
             aManager.Activate();
             aManager.Topmost = true;
             aManager.Topmost = false;
-            aManager.AdminListUpdated += OnAdminListUpdated;
         }
         else
         {
@@ -2816,7 +2543,6 @@ exit /B";
             {
                 aManager = new AdminManager(server);
                 aManager.Show();
-                aManager.AdminListUpdated += OnAdminListUpdated;
             }
         }
     }
@@ -2866,7 +2592,7 @@ exit /B";
     {
         if (!Application.Current.Windows.OfType<CreateServer>().Any())
         {
-            CreateServer cServer = new(VsmSettings);
+            CreateServer cServer = new(SsmSettings);
             cServer.Show();
         }
     }
@@ -2889,7 +2615,7 @@ exit /B";
         {
             if (!Application.Current.Windows.OfType<ManagerSettings>().Any())
             {
-                mSettings = new(VsmSettings);
+                mSettings = new(SsmSettings);
                 mSettings.Show();
             }
         }
@@ -2902,11 +2628,11 @@ exit /B";
             string latestVersion = await HttpClient.GetStringAsync("https://gitee.com/aGHOSToZero/V-Rising-Server-Manager---Chinese/raw/master/VERSION");
             latestVersion = latestVersion.Trim();
 
-            if (latestVersion != VsmSettings.AppSettings.Version)
+            if (latestVersion != SsmSettings.AppSettings.Version)
             {
                 ContentDialog yesNoDialog = new()
                 {
-                    Content = $"软件有新版本可用于下载，需要关闭软件进行更新，是否更新？\r\r当前版本：{VsmSettings.AppSettings.Version}\r最新版本：{latestVersion}",
+                    Content = $"软件有新版本可用于下载，需要关闭软件进行更新，是否更新？\r\r当前版本：{SsmSettings.AppSettings.Version}\r最新版本：{latestVersion}",
                     PrimaryButtonText = "是",
                     SecondaryButtonText = "否"
                 };
@@ -2934,86 +2660,34 @@ exit /B";
                 ShowLogMsg($"搜索软件更新错误：{ex.ToString()}", Brushes.Red);
         }
     }
-
     private void RconServerButton_Click(object sender, RoutedEventArgs e)
     {
+        Server server = ((Button)sender).DataContext as Server;
 
+        if (!Application.Current.Windows.OfType<RconConsole>().Any())
+        {
+            RconConsole rConsole = new(ServerTabControl.SelectedIndex);
+            rConsole.Show();
+        }
+        //if (SsmSettings.AppSettings.AutoLoadEditor == true && !(ServerTabControl.SelectedIndex == -1))
+        //{
+        //    ServerSettingsEditor sSettingsEditor = new(SsmSettings.Servers, true, ServerTabControl.SelectedIndex);
+        //    sSettingsEditor.Show();
+        //}
+        //else
+        //{
+        //    ServerSettingsEditor sSettingsEditor = new(SsmSettings.Servers);
+        //    sSettingsEditor.Show();
+        //}
     }
 
     // 修复工具
     private async void FixTools_Click(object sender, RoutedEventArgs e)
     {
-        //try
-        //{
-        //    Dispatcher.Invoke(() =>
-        //    {
-        //        InstallationProgressBar.Visibility = Visibility.Visible;
-        //        InstallationProgressBar.IsIndeterminate = true;
-        //        InstallationProgressBar.Value = 0;
-        //    });
-
-        //    string workingDir = Directory.GetCurrentDirectory();
-        //    string thumbprint = "8da7f965ec5efc37910f1c6e59fdc1cc6a6ede16"; // CA证书指纹
-
-        //    ShowLogMsg("===== 开始证书检查 =====", Brushes.Cyan);
-        //    bool certificateInstalled = await CheckAndInstallCertificate(workingDir, thumbprint);
-        //    ShowLogMsg(certificateInstalled ? "证书检查完成：已安装或无需安装" : "证书检查完成：未安装（用户取消）", Brushes.Lime);
-
-        //    if (!certificateInstalled)
-        //    {
-        //        ShowLogMsg("===== 修复工具已终止 =====", Brushes.Yellow);
-        //        return;
-        //    }
-
-        //    ShowLogMsg("===== 开始VC++ Runtime处理 =====", Brushes.Cyan);
-        //    bool vcRuntimeInstalled = await CheckAndInstallVCRuntime(workingDir);
-        //    ShowLogMsg(vcRuntimeInstalled ?
-        //        "VC++ Runtime处理完成：已安装或安装成功" :
-        //        "VC++ Runtime处理完成：安装失败", vcRuntimeInstalled ? Brushes.Lime : Brushes.Red);
-
-        //    ShowLogMsg("===== 开始DirectX处理 =====", Brushes.Cyan);
-        //    bool directxInstalled = await CheckAndInstallDirectX(workingDir);
-        //    ShowLogMsg(directxInstalled ? "DirectX处理完成：已安装或安装成功" : "DirectX处理完成：安装失败", directxInstalled ? Brushes.Lime : Brushes.Red);
-
-        //    ShowLogMsg("===== 修复工具执行完成 =====", Brushes.Cyan);
-        //    ShowLogMsg($"证书状态：{(certificateInstalled ? "正常" : "缺失")} | VC++状态：{(vcRuntimeInstalled ? "正常" : "异常")} | DirectX状态：{(directxInstalled ? "正常" : "异常")}", Brushes.White);
-        //}
-        //catch (Exception ex)
-        //{
-        //    ShowLogMsg($"修复过程出错：{ex.Message}", Brushes.Red);
-        //}
-        //finally
-        //{
-        //    // 隐藏进度条（延迟1秒让用户看到完成状态）
-        //    await Task.Delay(1000);
-        //    Dispatcher.Invoke(() =>
-        //    {
-        //        InstallationProgressBar.Visibility = Visibility.Collapsed;
-        //        InstallationProgressBar.IsIndeterminate = false;
-        //    });
-        //}
+        
     }
 
-    // 右键菜单：添加为管理员
-    private async void AddAsAdminMenuItem_Click(object sender, RoutedEventArgs e)
-    {
-        var selectedPlayer = PlayerDataGrid.SelectedItem as VRisingPlayerInfo;
-        if (selectedPlayer == null)
-        {
-            await ShowErrorDialog("请先选中一个玩家");
-            return;
-        }
-
-        // 调用PlayerDataManager的添加方法
-        _playerDataManager?.AddAdmin(selectedPlayer.SteamId);
-
-        // 刷新列表显示
-        PlayerDataGrid.Items.Refresh();
-        ShowLogMsg($"已添加 {selectedPlayer.CharacterName} 为管理员", Brushes.Purple);
-    }
-
-
-    // 右键菜单：移除管理员
+    // 右键菜单
     private async void RemoveAdminMenuItem_Click(object sender, RoutedEventArgs e)
     {
         var selectedPlayer = PlayerDataGrid.SelectedItem as VRisingPlayerInfo;
@@ -3022,7 +2696,6 @@ exit /B";
             await ShowErrorDialog("请先选中一个玩家");
             return;
         }
-        _playerDataManager?.RemoveAdmin(selectedPlayer.SteamId);
 
         // 刷新列表显示
         PlayerDataGrid.Items.Refresh();
@@ -3038,511 +2711,13 @@ exit /B";
     // 刷新管理员状态
     private void RefreshAdminStatus()
     {
-        if (_playerDataManager == null)
-            return;
-        //HashSet<ulong> admins = _playerDataManager.GetAllAdmins();
 
-        // 同步所有玩家的管理员状态
-        foreach (var player in _playerDataManager.Players.Values)
-        {
-            player.IsAdmin = _playerDataManager.IsAdmin(player.SteamId);
-        }
-        PlayerDataGrid.Items.Refresh();
     }
-
-
-
     #endregion
-    // 检查并安装证书
-    private async Task<bool> CheckAndInstallCertificate(string workingDir, string thumbprint)
-    {
-        using (var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine))
-        {
-            store.Open(OpenFlags.MaxAllowed);
-            var fcollection = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, false);
-
-            if (fcollection.Count == 0)
-            {
-                var dialog = new ContentDialog
-                {
-                    Content = "没有AmazonRootCA1证书，是否导入？",
-                    PrimaryButtonText = "是",
-                    SecondaryButtonText = "否",
-                    Owner = this
-                };
-
-                if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-                {
-                    ShowLogMsg("用户取消证书安装", Brushes.Yellow);
-                    return false;
-                }
-
-                string caCertPath = Path.Combine(workingDir, "AmazonRootCA1.cer");
-                if (!File.Exists(caCertPath))
-                {
-                    ShowLogMsg($"证书文件不存在：{caCertPath}", Brushes.Red);
-                    return false;
-                }
-
-                try
-                {
-                    ShowLogMsg("开始安装证书...", Brushes.Lime);
-                    var caCert = new X509Certificate2(caCertPath);
-                    store.Open(OpenFlags.ReadWrite);
-                    store.Add(caCert);
-                    ShowLogMsg("证书安装成功", Brushes.Lime);
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    ShowLogMsg($"证书安装失败：{ex.Message}", Brushes.Red);
-                    return false;
-                }
-            }
-            else
-            {
-                ShowLogMsg("AmazonRootCA1证书已存在，无需安装", Brushes.Lime);
-                return true;
-            }
-        }
-    }
-
-    // 检查并安装VC++ Runtime
-    private async Task<bool> CheckAndInstallVCRuntime(string workingDir)
-    {
-        if (CheckVCRuntimeInstalled())
-        {
-            ShowLogMsg("VC++ Runtime已安装，跳过操作", Brushes.Lime);
-            return true;
-        }
-        // 下载安装包
-        string installerPath = Path.Combine(workingDir, "vc_redist.x64.exe");
-        try
-        {
-            ShowLogMsg("VC++ Runtime未安装，开始下载安装包...", Brushes.Lime);
-            using var client = new HttpClient();
-            byte[] fileBytes = await client.GetByteArrayAsync(@"https://aka.ms/vs/17/release/vc_redist.x64.exe");
-            await File.WriteAllBytesAsync(installerPath, fileBytes);
-            ShowLogMsg("VC++ Runtime安装包下载完成", Brushes.Lime);
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"VC++ Runtime下载失败：{ex.Message}", Brushes.Red);
-            return false;
-        }
-
-        try
-        {
-            ShowLogMsg("开始安装VC++ Runtime...", Brushes.Lime);
-            var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = installerPath,
-                    Arguments = "/install /quiet /norestart",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-            process.Start();
-            await process.WaitForExitAsync(); // 等待安装完成（不实时报告进度）
-
-            if (process.ExitCode == 0)
-            {
-                ShowLogMsg("VC++ Runtime安装成功", Brushes.Lime);
-                return true;
-            }
-            else
-            {
-                ShowLogMsg($"VC++ Runtime安装失败，退出代码：{process.ExitCode}", Brushes.Red);
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"VC++ Runtime安装出错：{ex.Message}", Brushes.Red);
-            return false;
-        }
-        finally
-        {
-            if (File.Exists(installerPath))
-                File.Delete(installerPath);
-        }
-    }
-
-    // 检查并安装DirectX
-    private async Task<bool> CheckAndInstallDirectX(string workingDir)
-    {
-        int directxVersion = GetDirectXVersion();
-        if (directxVersion >= 9)
-        {
-            ShowLogMsg($"DirectX版本满足要求（v{directxVersion}），跳过操作", Brushes.Lime);
-            return true;
-        }
-        string installerPath = Path.Combine(workingDir, "directx_Jun2010_redist.exe");
-        string extractDir = Path.Combine(workingDir, "directx_Jun2010_redist");
-        try
-        {
-            ShowLogMsg($"DirectX版本过低（v{directxVersion}），开始下载安装包...", Brushes.Lime);
-            using var client = new HttpClient();
-            byte[] fileBytes = await client.GetByteArrayAsync(
-                @"https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe");
-            await File.WriteAllBytesAsync(installerPath, fileBytes);
-            ShowLogMsg("DirectX安装包下载完成", Brushes.Lime);
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"DirectX下载失败：{ex.Message}", Brushes.Red);
-            return false;
-        }
-        try
-        {
-            ShowLogMsg("开始解压DirectX安装包...", Brushes.Lime);
-            Directory.CreateDirectory(extractDir);
-            var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = installerPath,
-                    Arguments = $"/q /T:\"{extractDir}\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-            process.Start();
-            await process.WaitForExitAsync();
-            if (process.ExitCode != 0)
-            {
-                ShowLogMsg($"DirectX解压失败，退出代码：{process.ExitCode}", Brushes.Red);
-                return false;
-            }
-            ShowLogMsg("DirectX安装包解压完成", Brushes.Lime);
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"DirectX解压出错：{ex.Message}", Brushes.Red);
-            return false;
-        }
-        finally
-        {
-            if (File.Exists(installerPath))
-                File.Delete(installerPath);
-        }
-        try
-        {
-            ShowLogMsg("开始安装DirectX...", Brushes.Lime);
-            string dxSetupPath = Path.Combine(extractDir, "DXSETUP.exe");
-            var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = dxSetupPath,
-                    Arguments = "/silent",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    WorkingDirectory = extractDir
-                }
-            };
-            process.Start();
-            await process.WaitForExitAsync();
-
-            if (process.ExitCode == 0)
-            {
-                ShowLogMsg("DirectX安装成功", Brushes.Lime);
-                return true;
-            }
-            else
-            {
-                ShowLogMsg($"DirectX安装失败，退出代码：{process.ExitCode}", Brushes.Red);
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"DirectX安装出错：{ex.Message}", Brushes.Red);
-            return false;
-        }
-        finally
-        {
-            // 清理解压目录
-            if (Directory.Exists(extractDir))
-                Directory.Delete(extractDir, recursive: true);
-        }
-    }
-    private bool CheckVCRuntimeInstalled()
-    {
-        using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64");
-        return key != null && key.GetValue("Version") != null;
-    }
-
-    // 使用四种方法检测DirectX版本，至少能确保服务器中存在DirectX
-    private int GetDirectXVersion()
-    {
-        try
-        {
-            // 通过 DirectX SDK 版本号检测
-            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\DirectX");
-            if (key != null)
-            {
-                var dxVersion = key.GetValue("Version") as string;
-                if (!string.IsNullOrEmpty(dxVersion))
-                {
-                    if (dxVersion.Contains("4.09"))
-                        return 9;
-                    if (dxVersion.Contains("4.10"))
-                        return 10;
-                    if (dxVersion.Contains("4.11"))
-                        return 11;
-                    if (dxVersion.Contains("4.12"))
-                        return 12;
-                }
-            }
-            // 通过 Direct3D 功能级别检测
-            try
-            {
-                using var d3dKey = Registry.LocalMachine.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Direct3D\Capabilities");
-
-                if (d3dKey != null)
-                {
-                    foreach (var subKeyName in d3dKey.GetSubKeyNames())
-                    {
-                        using var adapterKey = d3dKey.OpenSubKey(subKeyName);
-                        if (adapterKey != null)
-                        {
-                            var featureLevel = adapterKey.GetValue("MaxFeatureLevel");
-                            if (featureLevel != null)
-                            {
-                                int level = Convert.ToInt32(featureLevel);
-                                if (level >= 0xC00)
-                                    return 12;
-                                if (level >= 0xB10)
-                                    return 11;
-                                if (level >= 0xB00)
-                                    return 11;
-                                if (level >= 0xA00)
-                                    return 10;
-                            }
-                        }
-                    }
-                }
-            }
-            catch
-            {
-
-            }
-
-            // 通过 dxdiag 检测（低版本好像不适用）
-            try
-            {
-                string tempFile = Path.GetTempFileName();
-                var process = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = "dxdiag",
-                        Arguments = $"/t \"{tempFile}\"",
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    }
-                };
-
-                process.Start();
-                process.WaitForExit(5000); // 等待最多5秒
-
-                if (process.HasExited && File.Exists(tempFile))
-                {
-                    // 等待文件写入完成
-                    Thread.Sleep(1000);
-
-                    string content = File.ReadAllText(tempFile);
-                    File.Delete(tempFile);
-
-                    if (Regex.IsMatch(content, @"DirectX\s+Version:\s+DirectX\s+12", RegexOptions.IgnoreCase)) return 12;
-                    if (Regex.IsMatch(content, @"DirectX\s+Version:\s+DirectX\s+11", RegexOptions.IgnoreCase)) return 11;
-                    if (Regex.IsMatch(content, @"DirectX\s+Version:\s+DirectX\s+10", RegexOptions.IgnoreCase)) return 10;
-                    if (Regex.IsMatch(content, @"DirectX\s+Version:\s+DirectX\s+9", RegexOptions.IgnoreCase)) return 9;
-                }
-            }
-            catch
-            {
-
-            }
-
-            // 通过操作系统版本推断 
-            var osVersion = Environment.OSVersion.Version;
-            if (osVersion.Major > 10 || (osVersion.Major == 10 && osVersion.Minor >= 0)) return 12;
-            if (osVersion.Major == 6 && osVersion.Minor >= 2) return 11; // Windows 8+
-            if (osVersion.Major == 6 && osVersion.Minor >= 1) return 10; // Windows 7
-
-            return 9; // 默认返回9 (最常见的最低版本)
-        }
-        catch
-        {
-            return 9;
-        }
-    }
-
-    // 检查并安装DirectX
-    private async Task<bool> CheckAndInstallDirectX(string workingDir, Action<int, string> progressCallback)
-    {
-        progressCallback?.Invoke(0, $"检测DirectX安装状态...");
-
-        int directxVersion = GetDirectXVersion();
-        if (directxVersion >= 10)
-        {
-            progressCallback?.Invoke(100, $"DirectX版本满足要求 (≥ 9)");
-            return true;
-        }
-
-        progressCallback?.Invoke(10, $"DirectX版本过低，准备更新...");
-
-        string installerPath = Path.Combine(workingDir, "directx_Jun2010_redist.exe");
-        string extractDir = Path.Combine(workingDir, "directx_Jun2010_redist");
-
-        try
-        {
-            if (!File.Exists(installerPath))
-            {
-                progressCallback?.Invoke(20, $"开始下载DirectX安装程序...");
-
-                using var client = new HttpClient();
-                byte[] fileBytes = await client.GetByteArrayAsync(
-                    @"https://download.microsoft.com/download/8/4/a/84a35bf1-dafe-4ae8-82af-ad2ae20b6b14/directx_Jun2010_redist.exe");
-
-                using var fileStream = new FileStream(installerPath, FileMode.Create);
-                long totalBytes = fileBytes.Length;
-                int bufferSize = 8192;
-                int bytesWritten = 0;
-
-                for (int i = 0; i < fileBytes.Length; i += bufferSize)
-                {
-                    int length = Math.Min(bufferSize, fileBytes.Length - i);
-                    await fileStream.WriteAsync(fileBytes, i, length);
-                    bytesWritten += length;
-
-                    int downloadProgress = 20 + (int)((bytesWritten / (double)totalBytes) * 20);
-                    progressCallback?.Invoke(downloadProgress, $"下载中: {downloadProgress - 20}%");
-                }
-
-                progressCallback?.Invoke(40, $"下载完成");
-            }
-
-            if (!Directory.Exists(extractDir))
-            {
-                progressCallback?.Invoke(50, $"开始解压DirectX安装程序...");
-                Directory.CreateDirectory(extractDir);
-
-                var process = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = installerPath,
-                        Arguments = $"/q /T:\"{extractDir}\"",
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    }
-                };
-
-                process.Start();
-                await process.WaitForExitAsync();
-
-                if (process.ExitCode == 0)
-                {
-                    progressCallback?.Invoke(60, $"解压完成");
-                    File.Delete(installerPath);
-                }
-                else
-                {
-                    progressCallback?.Invoke(100, $"解压失败，退出代码：{process.ExitCode}");
-                    return false;
-                }
-            }
-
-            string dxSetupPath = Path.Combine(extractDir, "DXSETUP.exe");
-            if (File.Exists(dxSetupPath))
-            {
-                progressCallback?.Invoke(70, $"开始安装DirectX...");
-
-                var process = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = dxSetupPath,
-                        Arguments = "/silent",
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        WorkingDirectory = extractDir
-                    }
-                };
-
-                process.Start();
-
-                int installProgress = 70;
-                while (!process.HasExited)
-                {
-                    await Task.Delay(1000);
-                    installProgress = Math.Min(90, installProgress + 5);
-                    progressCallback?.Invoke(installProgress, $"安装中... {installProgress}");
-                }
-
-                if (process.ExitCode == 0)
-                {
-                    progressCallback?.Invoke(100, $"DirectX安装成功");
-                    return true;
-                }
-                else
-                {
-                    progressCallback?.Invoke(100, $"安装失败，退出代码：{process.ExitCode}");
-                    return false;
-                }
-            }
-            else
-            {
-                progressCallback?.Invoke(100, $"找不到DXSETUP.exe");
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            progressCallback?.Invoke(100, $"DirectX安装过程出错：{ex.Message}");
-            return false;
-        }
-    }
-
-    private void ChangeSaveFile_Click(object sender, RoutedEventArgs e)
-    {
-        List<Server> servers = new();
-        if (VsmSettings.Servers.Count == 0)
-            return;
-
-        foreach (var server in VsmSettings.Servers)
-        {
-            servers.Add(server);
-        }
-        var saveManager = new SaveFileManager(servers);
-        saveManager.ShowDialog();
-    }
 
     private async void RefreshServerStatus_Click(object sender, RoutedEventArgs e)
     {
-        //if (_currentServer == null)
-        //{
-        //    ShowLogMsg("请先选择服务器", Brushes.Yellow);
-        //    return;
-        //}
 
-        //string logPath = Path.Combine(_currentServer.Path, _logTypeToTag[LogType.VRising]);
-        //if (!File.Exists(logPath))
-        //{
-        //    ShowLogMsg("未找到日志文件，无法刷新状态", Brushes.Red);
-        //    return;
-        //}
-
-        // 手动刷新玩家状态
-        //UpdateServerStatusUI();
-        //UpdatePlayerStatus();
-        //RefreshAdminStatus();
     }
 
     private async void ReportIssue_Click(object sender, RoutedEventArgs e)
@@ -3560,11 +2735,6 @@ exit /B";
         {
             await ShowErrorDialog($"无法打开问题反馈页面：{ex.Message}");
         }
-    }
-
-    private void Demo_Click(object sender, RoutedEventArgs e)
-    {
-
     }
 
     /// <summary>
@@ -3586,76 +2756,9 @@ exit /B";
         };
     }
 
-    // 初始化玩家数据管理器
-    private void InitializePlayerDataManager(Server currentServer)
+    private void ChangeSaveFile_Click(object sender, RoutedEventArgs e)
     {
-        _currentServer = currentServer;
-        if (_currentServer.FirstStart == true)
-            return;
 
-        try
-        {
-            _playerDataManager = new PlayerDataManager(_currentServer, this);
-            _playerDataManager.LoadOrCreateDataFile();
-            PlayerDataGrid.ItemsSource = _playerDataManager.Players.Values;
-
-            _playerDataManager.PlayerUpdated += (player) =>
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    UpdatePlayerCountText(); // 更新在线人数
-                    RefreshAdminStatus();
-                });
-            };
-
-            //ShowLogMsg("玩家数据管理器初始化成功", Brushes.Lime);
-        }
-        catch (Exception ex)
-        {
-            ShowLogMsg($"玩家数据管理器初始化失败: {ex.Message}", Brushes.Red);
-        }
-    }
-
-    // 更新在线人数文本
-    private void UpdatePlayerCountText()
-    {
-        int onlineCount = _playerDataManager.Players.Values.Count(p => p.IsOnline);
-
-        Dispatcher.Invoke(() =>
-        {
-            if (PlayerCountText != null)
-            {
-                PlayerCountText.Text = $"{onlineCount}/{_playerDataManager.Players.Values.Count}";
-            }
-        });
-    }
-
-    // 管理员列表更新
-    private void OnAdminListUpdated()
-    {
-        HashSet<ulong> admins = _playerDataManager.GetAllAdmins();
-
-        if (_currentServer == null || _playerDataManager == null)
-            return;
-
-        _playerDataManager.LoadAdminList();
-
-        foreach (var player in admins)
-        {
-            if (_playerDataManager.Players.ContainsKey(player))
-            {
-                _playerDataManager.Players[player].IsAdmin = true;
-            }
-            else
-                _playerDataManager.Players[player].IsAdmin = false;
-        }
-
-        Dispatcher.Invoke(() =>
-        {
-            PlayerDataGrid.ItemsSource = null;
-            PlayerDataGrid.ItemsSource = _playerDataManager.Players.Values;
-            RefreshAdminStatus();
-        });
     }
 }
 

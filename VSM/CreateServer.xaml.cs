@@ -43,9 +43,11 @@ namespace SoulMaskServerManager
 
         private async void CreateButton_Click(object sender, RoutedEventArgs e)
         {
+            string newServerSettingsPath = Path.Combine(newServer.Path, "SaveData", "Settings");
+
             foreach (Server server in settings.Servers)
             {
-                if (server.vsmServerName == newServer.vsmServerName)
+                if (server.ssmServerName == newServer.ssmServerName)
                 {
                     ContentDialog closeFileDialog = new()
                     {
@@ -60,7 +62,7 @@ namespace SoulMaskServerManager
             if (!Directory.Exists(newServer.Path))
                 Directory.CreateDirectory(newServer.Path);
 
-            if (File.Exists(newServer.Path + @"\VRisingServer.exe"))
+            if (File.Exists(newServer.Path + @"\WSServer.exe"))
             {
                 ContentDialog yesNoDialog = new()
                 {
@@ -72,6 +74,13 @@ namespace SoulMaskServerManager
                     return;
             }
 
+            if (!Directory.Exists(newServerSettingsPath))
+                Directory.CreateDirectory(newServerSettingsPath);
+
+            if (!File.Exists(Path.Combine(newServerSettingsPath, "ServerSettings.json")))
+                ServerSettingsEditor.CreateDefaultSettingsFile(newServer);
+
+            ServerIdMapping.EnsureServerHasId(newServer);
             settings.Servers.Add(newServer);
             MainSettings.Save(settings);
             Close();

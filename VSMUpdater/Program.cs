@@ -43,8 +43,8 @@ Console.WriteLine("正在创建设置的备份。");
 if (!Directory.Exists(workingDir + @"\Backups"))
     Directory.CreateDirectory(workingDir + @"\Backups");
 
-if (File.Exists(workingDir + @"\VSMSettings.json"));
-    File.Copy(workingDir + @"\VSMSettings.json", workingDir + @"\Backups\VSMSettings.bak", true);
+if (File.Exists(workingDir + @"\SSMSettings.json"));
+    File.Copy(workingDir + @"\SSMSettings.json", workingDir + @"\Backups\VSMSettings.bak", true);
 
 Console.WriteLine();
 

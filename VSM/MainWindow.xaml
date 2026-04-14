@@ -9,7 +9,8 @@
         ui:WindowHelper.UseModernWindowStyle="True"
         WindowStartupLocation="CenterScreen" 
         mc:Ignorable="d"
-        Title="夜族崛起服务端管理器（V Rising Server Manager）" Height="675" MinHeight="665" Width="1200" MinWidth="1200" ResizeMode="CanResize">
+        Icon="logo.ico"
+        Title="灵魂面甲服务端管理器（Soulmask Server Manager）" Height="675" MinHeight="665" Width="1200" MinWidth="1200" ResizeMode="CanResize">
 
 
     <!--<Window.Resources>
@@ -48,7 +49,7 @@
                     <TabControl.ItemTemplate>
                         <DataTemplate>
                             <DockPanel>
-                                <TextBlock Text="{Binding vsmServerName}" FontWeight="UltraBold"/>
+                                <TextBlock Text="{Binding ssmServerName}" FontWeight="UltraBold"/>
                                 <Image Stretch="None" Margin="2,0,0,0">
                                     <Image.Style>
                                         <Style TargetType="{x:Type Image}">
@@ -100,7 +101,7 @@
                                 <GroupBox Grid.Row="0" Grid.Column="0" Header="服务器启动设置" Margin="5" MinHeight="225">
                                     <StackPanel>
                                         <DockPanel>
-                                            <TextBlock Text="服务器名称：" VerticalAlignment="Center" Width="90"/>
+                                            <TextBlock Text="服务器备注：" VerticalAlignment="Center" Width="90"/>
                                             <TextBox Text="{Binding LaunchSettings.DisplayName, Mode=TwoWay}" Width="Auto" IsEnabled="True" ToolTip="服务器列表中显示的服务器的名称(仅在服务端管理器中显示)。"/>
                                         </DockPanel>
                                         <DockPanel Margin="0,5,0,0">
@@ -112,7 +113,7 @@
                                             <TextBox Text="{Binding LaunchSettings.BindingIP, Mode=TwoWay}" Width="320" IsEnabled="{Binding IsChecked, ElementName=BindToIPCheck}" ToolTip="要将服务器绑定到的IP地址。"/>
                                         </DockPanel>-->
                                         <DockPanel Margin="0 10 0 0" HorizontalAlignment="Center">
-                                            <ComboBox 
+                                            <!--<ComboBox 
                                                 x:Name="MapSelectComboBox" 
                                                 VerticalAlignment="Top" 
                                                 Width="Auto" 
@@ -121,7 +122,7 @@
                                                 SelectedIndex="{Binding ServerMap, Mode=TwoWay}">
                                                 <ComboBoxItem Content="云雾之森" ToolTip="Level01_Main"/>
                                                 <ComboBoxItem Content="金色浮沙" ToolTip="DLC_Level01_Main"/>
-                                            </ComboBox>
+                                            </ComboBox>-->
                                             <!--<Button Grid.Column="0" Margin="10" Click="GameSettingsEditor_Click" ToolTip="打开游戏设置编辑器。" Height="30" HorizontalAlignment="Stretch" IsEnabled="False">
                                                 <DockPanel>
                                                     <Image Source="Resources\icon_EditDocument.png"/>
@@ -276,14 +277,14 @@
                                 </DockPanel>
                             </Button>
 
-                            <!--<Button Margin="2" ToolTip="打开选定服务器的RCON控制台。" Click="RconServerButton_Click" HorizontalAlignment="Stretch" IsEnabled="False">
+                            <Button Margin="2" ToolTip="打开选定服务器的RCON控制台。" Click="RconServerButton_Click" HorizontalAlignment="Stretch" IsEnabled="True">
                                 <Button.Content>
                                     <DockPanel>
                                         <Image Source="Resources\icon_Console.png" Margin="5,0,0,0" Stretch="None"/>
                                         <TextBlock Text="RCON远控" Margin="5,0,5,0"/>
                                     </DockPanel>
                                 </Button.Content>
-                            </Button>-->
+                            </Button>
                         </StackPanel>
 
                         <StackPanel Grid.Row="1" Grid.Column="1">
@@ -502,29 +503,30 @@
                         </Grid.RowDefinitions>
 
                         <StackPanel Orientation="Horizontal" Margin="5,5,5,0" Grid.Row="0">
-                            <Button Click="RefreshLogButton_Click" Tag="VRising" Margin="0,0,5,0" ToolTip="刷新日志">
+                            <Button Click="RefreshLogButton_Click" Tag="WSServer" Margin="0,0,5,0" ToolTip="刷新日志">
                                 <ui:SymbolIcon Symbol="Refresh"/>
                             </Button>
-                            <Button Click="ClearLogButton_Click" Tag="VRising" Margin="0,0,5,0" ToolTip="清空日志">
+                            <Button Click="ClearLogButton_Click" Tag="WSServer" Margin="0,0,5,0" ToolTip="清空日志">
                                 <ui:SymbolIcon Symbol="Clear"/>
                             </Button>
-                            <Button Click="SaveLogButton_Click" Tag="VRising" Margin="0,0,5,0" ToolTip="保存日志">
+                            <Button Click="SaveLogButton_Click" Tag="WSServer" Margin="0,0,5,0" ToolTip="保存日志">
                                 <ui:SymbolIcon Symbol="Save"/>
                             </Button>
-                            <Button Click="OpenLogButton_Click" Tag="VRising" Margin="0,0,5,0" ToolTip="保存日志">
+                            <Button Click="OpenLogButton_Click" Tag="WSServer" Margin="0,0,5,0" ToolTip="打开日志">
                                 <ui:SymbolIcon Symbol="OpenFile"/>
                             </Button>
-                            <CheckBox x:Name="AutoScrollVRisingLog" Content="自动滚动" IsChecked="True" Margin="10,0,0,0"/>
+                            <CheckBox x:Name="AutoScrollSoulmaskLog" Content="自动滚动" IsChecked="True" Margin="10,0,0,0"/>
                         </StackPanel>
 
-                        <RichTextBox x:Name="VRisingLogTextBox" 
+                        <RichTextBox x:Name="SoulmaskLogTextBox" 
                                      Grid.Row="1"
                                      Background="Black" 
                                      Foreground="White" 
                                      IsReadOnly="True"
                                      VerticalScrollBarVisibility="Auto"
                                      HorizontalScrollBarVisibility="Auto"
-                                     Margin="5"/>
+                                     Margin="5"
+                                     FontSize="14"/>
                     </Grid>
                 </TabItem>
 
@@ -649,16 +651,6 @@
                                         </MenuItem.Icon>
                                     </MenuItem>
                                     <Separator/>
-                                    <MenuItem Header="添加管理员" Click="AddAsAdminMenuItem_Click" ToolTip="将选中玩家添加到管理员列表">
-                                        <MenuItem.Icon>
-                                            <ui:SymbolIcon Symbol="Add"/>
-                                        </MenuItem.Icon>
-                                    </MenuItem>
-                                    <MenuItem Header="移除管理员" Click="RemoveAdminMenuItem_Click" ToolTip="从管理员列表中移除选中玩家">
-                                        <MenuItem.Icon>
-                                            <ui:SymbolIcon Symbol="Remove"/>
-                                        </MenuItem.Icon>
-                                    </MenuItem>
                                     <!--<MenuItem Header="封禁玩家" Click="BanPlayerMenuItem_Click">
                                         <MenuItem.Icon>
                                             <ui:SymbolIcon Symbol="Dislike"/>

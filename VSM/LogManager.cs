@@ -23,10 +23,7 @@ public class LogManager : Window
     public enum LogType
     {
         MainConsole,
-        WSServer,
-        BepinExOutput,
-        BepinExError,
-        BepInExWindow
+        WSServer
     }
 
 
@@ -45,7 +42,7 @@ public class LogManager : Window
 
         if (string.IsNullOrEmpty(server.Path))
         {
-            ShowLogError($"写入崩溃日志失败：[{server.vsmServerName ?? "未知服务器"}] 的路径未设置");
+            ShowLogError($"写入崩溃日志失败：[{server.ssmServerName ?? "未知服务器"}] 的路径未设置");
             return false;
         }
 
@@ -54,13 +51,6 @@ public class LogManager : Window
             string crashLogDir = Path.Combine(server.Path, "CrashLog", DateTime.Today.ToString("yyyy-MM-dd"), DateTime.Now.ToString("HH-mm-ss"));
             Directory.CreateDirectory(crashLogDir);
             
-            // 复制BepInEx日志
-            if (Directory.Exists(Path.Combine(server.Path, "BepinEx")))
-            {
-                CopyFileIfExists(Path.Combine(server.Path, "BepinEx", "ErrorLog.log"), Path.Combine(crashLogDir, "BepinExErrorLog.log"));
-                CopyFileIfExists(Path.Combine(server.Path, "BepinEx", "LogOutput.log"), Path.Combine(crashLogDir, "BepinExLogOutput.log"));
-            }
-
             //复制服务器核心日志
             CopyFileIfExists(Path.Combine(server.Path, "WS", "Saved", "Logs", "WS.log"), Path.Combine(crashLogDir, "VRisingServer.log"));
             //ShowLogSuccess($"崩溃日志已保存至：{crashLogDir}");

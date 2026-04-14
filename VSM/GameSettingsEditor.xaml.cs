@@ -9,7 +9,6 @@ using System.Text.Json;
 using System.Collections.ObjectModel;
 using ModernWpf.Controls;
 using SoulMaskServerManager.Controls;
-using SoulMaskServerManager.Controls;
 using SoulMaskServerManager;
 
 namespace SoulMaskServerManager
@@ -17,9 +16,7 @@ namespace SoulMaskServerManager
     public partial class GameSettingsEditor : Window
     {
         public GameSettings gameSettings;
-        public List<Achievement> fakeAchievements = new List<Achievement>();
         public List<VBloodUnitSetting> fakeVBloodUnits = new List<VBloodUnitSetting>();
-        public List<Research> fakeResearch = new List<Research>();
         public JsonSerializerOptions serializerOptions = new JsonSerializerOptions { WriteIndented = true };
         private ObservableCollection<Server> servers;
 
@@ -129,67 +126,17 @@ namespace SoulMaskServerManager
             fakeVBloodUnits.Add(new VBloodUnitSetting() { Name = "长子亚当                ", UnitId = 1233988687, UnitLevel = 88, DefaultUnlocked = false });
             fakeVBloodUnits.Add(new VBloodUnitSetting() { Name = "不死君王德古拉          ", UnitId = -327335305, UnitLevel = 91, DefaultUnlocked = false });
             VBloodData.ItemsSource = fakeVBloodUnits;
-            fakeAchievements.Clear();
-            fakeAchievements.Add(new Achievement() { ID = -1770927128, Name = "收集遗骸          ", Count = 1, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 436375429, Name = "舞刀弄剑          ", Count = 2, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -1400391027, Name = "掌握魔法          ", Count = 3, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -2102083739, Name = "防御措施          ", Count = 4, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 1566228114, Name = "野兽之皮          ", Count = 4, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 1695239324, Name = "向森林进发        ", Count = 5, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -54280488, Name = "集合              ", Count = 5, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 1694767961, Name = "暗影领主          ", Count = 7, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -1899098914, Name = "筑起工事          ", Count = 8, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -122882616, Name = "遮阳棚            ", Count = 8, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 560247139, Name = "为猎杀做好准备    ", Count = 9, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -1995132640, Name = "觅血              ", Count = 10, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -302458684, Name = "对力量的渴望      ", Count = 10, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -1434604634, Name = "图书馆里的第一本书", Count = 11, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 1668809517, Name = "扩展领地          ", Count = 12, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 334973636, Name = "建造城堡          ", Count = 14, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 134993992, Name = "传送门            ", Count = 13, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 606418711, Name = "古堡领主          ", Count = 15, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -892747762, Name = "仆从              ", Count = 16, Unlocked = false });
-            //fakeAchievements.Add(new Achievement() { ID = -892747762,   Name = "宝藏室              ",  Count = 16, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -437605270, Name = "黑暗军团          ", Count = 17, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -1472413073, Name = "拓展视野          ", Count = 16, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 1248242594, Name = "流出鲜血的龙头    ", Count = 16, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -327597689, Name = "统帅宝座          ", Count = 18, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 149111189, Name = "至尊统治          ", Count = 18, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -452204266, Name = "窥视莫尔提姆之眼  ", Count = 18, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 1805684941, Name = "高耸入云的城堡    ", Count = 19, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -699165894, Name = "夜幕战马          ", Count = 20, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 1861267375, Name = "吸血鬼帝国        ", Count = 21, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = -2104585843, Name = "灵魂之石          ", Count = 22, Unlocked = false });
-            fakeAchievements.Add(new Achievement() { ID = 1762480233, Name = "暗夜领主          ", Count = 23, Unlocked = false });
-            AchievementsData.ItemsSource = fakeAchievements;
-            fakeResearch.Clear();
-            fakeResearch.Add(new Research() { Name = "1 阶段", ID = -495424062, Unlocked = false });
-            fakeResearch.Add(new Research() { Name = "2 阶段", ID = -1292809886, Unlocked = false });
-            fakeResearch.Add(new Research() { Name = "3 阶段", ID = -1262194203, Unlocked = false });
-            ResearchData.ItemsSource = fakeResearch;
         }
 
         private async void FileMenuSave_Click(object sender, RoutedEventArgs e)
         {
             gameSettings.UnlockedAchievements.Clear();
-            foreach (var item in fakeAchievements)
-            {
-                if (item.Unlocked == true)
-                {
-                    gameSettings.UnlockedAchievements.Add(item.ID);
-                }
-            }
             gameSettings.VBloodUnitSettings.Clear();
             foreach (var vblood in fakeVBloodUnits)
             {
                 gameSettings.VBloodUnitSettings.Add(new VBloodUnitSetting() { UnitId = vblood.UnitId, UnitLevel = vblood.UnitLevel, DefaultUnlocked = vblood.DefaultUnlocked });
             }
             gameSettings.UnlockedResearchs.Clear();
-            foreach (var research in fakeResearch)
-            {
-                if (research.Unlocked == true)
-                    gameSettings.UnlockedResearchs.Add(research.ID);
-            }
             switch (StarterEquipmentCombo.SelectedIndex)
             {
                 case 0:
@@ -748,22 +695,6 @@ namespace SoulMaskServerManager
                             }
                             fakeUnit.DefaultUnlocked = unit.DefaultUnlocked;
                         }
-                    }
-                }
-                foreach (int achievement in LoadedSettings.UnlockedAchievements)
-                {
-                    foreach (Achievement fakeAchievement in fakeAchievements)
-                    {
-                        if (achievement == fakeAchievement.ID)
-                            fakeAchievement.Unlocked = true;
-                    }
-                }
-                foreach (int research in LoadedSettings.UnlockedResearchs)
-                {
-                    foreach (Research fakeResearch in fakeResearch)
-                    {
-                        if (research == fakeResearch.ID)
-                            fakeResearch.Unlocked = true;
                     }
                 }
                 gameSettings = LoadedSettings;

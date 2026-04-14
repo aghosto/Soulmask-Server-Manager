@@ -105,14 +105,14 @@
                                     <ComboBoxItem Content="限时" ToolTip="玩家只能在特定时间内破坏敌人的城堡结构。"/>
                                 </ComboBox>
                                 <TextBlock Text="攻城石魔生命值"/>
-                                <ComboBox SelectedIndex="{Binding SiegeWeaponHealth, Mode=TwoWay}" ToolTip="设定攻城石魔的生命值">
+                                <ComboBox ToolTip="选择一个官方设定的预设作为服务器初始预设设置">
                                     <ComboBoxItem Content="很低（750血）"/>
                                     <ComboBoxItem Content="低（1000血）"/>
                                     <ComboBoxItem Content="一般（1250血）"/>
                                     <ComboBoxItem Content="高（1750血）"/>
                                     <ComboBoxItem Content="很高（2500血）"/>
                                     <ComboBoxItem Content="极高（3250血）"/>
-                                    <ComboBoxItem Content="非常高4000血）"/>
+                                    <ComboBoxItem Content="非常高(4000血）"/>
                                     <ComboBoxItem Content="空前绝后（5000血）"/>
                                     <ComboBoxItem Content="至高无上（5000血）"/>
                                 </ComboBox>

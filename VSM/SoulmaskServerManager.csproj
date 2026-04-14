@@ -125,6 +125,9 @@
     <EmbeddedResource Include="Resources\Level80PvP.json" />
     <EmbeddedResource Include="Resources\Level90PvE.json" />
     <EmbeddedResource Include="Resources\Level90PvP.json" />
+    <Resource Include="logo.ico">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Resource>
     <Resource Include="Resources\logo.ico" />
     <EmbeddedResource Include="Resources\SoloPvP.json" />
     <EmbeddedResource Include="Resources\StandardPvE.json" />
@@ -141,9 +144,6 @@
 
   <ItemGroup>
     <Resource Include="App.config" />
-    <Resource Include="logo.ico">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </Resource>
     <Resource Include="Resources\icon_Add.png">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </Resource>

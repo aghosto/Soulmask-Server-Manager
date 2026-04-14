@@ -290,8 +290,8 @@ namespace SoulMaskServerManager
     public class Rcon
     {
         public bool Enabled { get; set; } = false;
-        public string Password { get; set; } = "输入密码";
-        public int Port { get; set; } = 25575;
+        public string Password { get; set; } = "";
+        public int Port { get; set; } = 19000;
         //public string CommandCurrent { get; set; } = "";
     }
 
@@ -386,64 +386,38 @@ namespace SoulMaskServerManager
         public WarEventGameSettings WarEventGameSettings { get; set; } = new WarEventGameSettings();
     }
 
+    public class PresetItem
+    {
+        public string DisplayName { get; set; }  // 显示名称
+        public string FileName { get; set; }     // 真实文件名.json
+    }
+
     [Serializable]
     public class ServerSettings
     {
         public string SteamServerName { get; set; } = "My Soulmask Server";
         public int Port { get; set; } = 8777;
         public int QueryPort { get; set; } = 27015;
-        public int MaxConnectedUsers { get; set; } = 40;
+        public int EchoPort { get; set; } = 18888;
+        public int MaxPlayers { get; set; } = 40;
         public string Password { get; set; } = "";
-        public bool pvp { get; set; } = false;
-        public int backup { get; set; } = 900;
-        public int saving { get; set; } = 600;
+        public string GMPassword { get; set; } = "";
+        public bool PVP { get; set; } = false; 
+        public int Backup { get; set; } = 900;
+        public int Saving { get; set; } = 600;
         public string Map { get; set; } = "Level01_Main";
-        public API API { get; set; } = new API();
+        public int AutoSaveCount { get; set; } = 5;
+        public int AutoSaveInterval { get; set; } = 5;
+        public int AutoCleanInterval { get; set; } = 10;
+        public int ClusterMode { get; set; } = 0;
+        public int MainPort { get; set; } = 0;
+        public string PublicIP { get; set; } = "";
+        public bool ManualIP { get; set; } = false;
+        public string SelfServerUniqueId { get; set; } = "";
+        public string MainServerUniqueId { get; set; } = "";
+        public string ServerPresetSettings { get; set; } = "无";
+        public string Mods { get; set; } = "";
+        //public API API { get; set; } = new API();
         public Rcon Rcon { get; set; } = new Rcon();
-    }
-    public class VoiceServicesSettings
-    {
-        public bool VOIPEnabled { get; set; } = false;
-        public string VOIPIssuer { get; set; } = "";
-        public string VOIPSecret { get; set; } = "";
-        public string VOIPAppUserId { get; set; } = "";
-        public string VOIPAppUserPwd { get; set; } = "";
-        public string VOIPVivoxDomain { get; set; } = "";
-        public string VOIPAPIEndpoint { get; set; } = "";
-        public int VOIPConversationalDistance { get; set; } = 14;
-        public int VOIPAudibleDistance { get; set; } = 40;
-        public double VOIPConversationalSpeed { get; set; } = 2.0;
-    }
-    public class ServerSpecSettings
-    {
-        public bool ServerAutoRestartEnable { get; set; } = false;
-        public int AutoRestart_Hour { get; set; } = 0;
-        public int AutoRestart_Min { get; set; } = 0;
-        public int AutoRestart_Sec { get; set; } = 0;
-    }
-    public class ChangeServerSaveSettings
-    {
-        public string NowServerName { get; set; } = "";
-        public string NowServerDescription { get; set; } = "";
-        public string ReadyServerName { get; set; } = "";
-        public string ReadyServerDescription { get; set; } = "";
-    }
-    public class Achievement
-    {
-        [JsonIgnore]
-        public string? Name { get; set; }
-        public int Count { get; set; }
-        public int ID { get; set; }
-        [JsonIgnore]
-        public bool Unlocked { get; set; }
-    }
-
-    public class Research
-    {
-        [JsonIgnore]
-        public string? Name { get; set; }
-        public int ID { get; set; }
-        [JsonIgnore]
-        public bool Unlocked { get; set; }
     }
 }

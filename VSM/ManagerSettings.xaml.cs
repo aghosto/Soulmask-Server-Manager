@@ -4,6 +4,12 @@ using System.Windows;
 using System.Windows.Media;
 using System.Collections.Specialized;
 using static SoulMaskServerManager.LogManager;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using Newtonsoft.Json.Linq;
 
 namespace SoulMaskServerManager
 {
@@ -71,7 +77,6 @@ namespace SoulMaskServerManager
                     return;
                 }
             }
-
             _mainWindow.ShowLogMsg(logMessage, color);
         }
 
@@ -157,7 +162,7 @@ namespace SoulMaskServerManager
 
             var server = _mainSettings.Servers[ServerCombo.SelectedIndex];
             server.WebhookMessages = new ServerWebhook();
-            ShowLogMsg($"已重置服务器 {server.vsmServerName} 的Webhook设置", Brushes.LimeGreen);
+            ShowLogMsg($"已重置服务器 {server.ssmServerName} 的Webhook设置", Brushes.LimeGreen);
         }
 
         /// <summary>
@@ -178,6 +183,91 @@ namespace SoulMaskServerManager
         {
             base.OnClosed(e);
             _mainSettings.Servers.CollectionChanged -= Servers_CollectionChanged;
+        }
+    }
+
+    /// <summary>
+    /// 服务器ID映射（时间戳ID <-> 服务器名称）
+    /// 改名也不会丢失关联
+    /// </summary>
+    public static class ServerIdMapping
+    {
+        private static readonly string _savePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "SSMSettings.json");
+        private static MainSettings SsmSettings = new();
+
+        private static JsonSerializerOptions _jsonOptions = new()
+        {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+
+        public static void Load()
+        {
+            try
+            {
+                if (File.Exists(_savePath))
+                {
+                    string json = File.ReadAllText(_savePath);
+                    SsmSettings = MainSettings.LoadManagerSettings();
+                }
+            }
+            catch
+            {
+
+            }
+        }
+
+        public static void Save()
+        {
+            try
+            {
+                string json = System.Text.Json.JsonSerializer.Serialize(SsmSettings, _jsonOptions);
+                File.WriteAllText(_savePath, json);
+            }
+            catch { }
+        }
+
+        public static string NewId() => DateTime.Now.Ticks.ToString();
+
+        public static void EnsureServerHasId(Server server)
+        {
+            if (server == null) 
+                return;
+
+            if (!string.IsNullOrEmpty(server.UniqueId))
+            {
+                string serverSettingsPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
+                ServerSettings serverSettings = ServerSettingsEditor.LoadServerSettings(serverSettingsPath);
+
+                if (string.IsNullOrEmpty(serverSettings.SelfServerUniqueId) || serverSettings.SelfServerUniqueId != server.UniqueId)
+                {
+                    string grandNewId = NewId();
+                    server.UniqueId = grandNewId;
+                    serverSettings.SelfServerUniqueId = grandNewId;
+                    ServerSettingsEditor.SaveServerSettings(serverSettingsPath, serverSettings);
+                }
+                Save();
+
+                return;
+            }
+
+            string newId = NewId();
+            server.UniqueId = newId;
+
+            Save();
+        }
+
+        public static void EnsureAllServersHaveIds()
+        {
+            SsmSettings = MainSettings.LoadManagerSettings();
+
+            if (SsmSettings.Servers.Count > 0)
+            {
+                foreach (var s in SsmSettings.Servers) 
+                    EnsureServerHasId(s);
+            }
+
+            Save();
         }
     }
 }

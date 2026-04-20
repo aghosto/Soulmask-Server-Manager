@@ -141,7 +141,7 @@ using System.Text.Json.Nodes;
 
 Console.WriteLine("准备下载最新版本。");
 
-Process[] vsmProcesses = Process.GetProcessesByName("SoulMaskServerManager");
+Process[] vsmProcesses = Process.GetProcessesByName("SoulmaskServerManager");
 if (vsmProcesses.Length != 0)
 {
     Console.WriteLine("SoulmaskServerManager 正在运行，请关闭后再更新！");
@@ -278,16 +278,13 @@ foreach (string file in Directory.GetFiles(tempDir))
     File.Copy(file, dest, true);
 }
 
-// ==============================================
-// ✅ 核心：自动更新配置文件中的 Version 版本号
-// ==============================================
 if (!string.IsNullOrEmpty(latestVersion) && File.Exists(configFile))
 {
     try
     {
         string jsonContent = await File.ReadAllTextAsync(configFile);
         JsonNode jsonNode = JsonNode.Parse(jsonContent);
-        jsonNode["Version"] = latestVersion; // 直接改写版本号
+        jsonNode["Version"] = latestVersion;
         var options = new JsonSerializerOptions { WriteIndented = true };
         string newJson = JsonSerializer.Serialize(jsonNode, options);
         await File.WriteAllTextAsync(configFile, newJson);

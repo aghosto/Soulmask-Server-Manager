@@ -1,0 +1,31 @@
+﻿<ui:ContentDialog x:Class="SoulmaskServerManager.Controls.ModifySsmNameDialog"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:ui="http://schemas.modernwpf.com/2019"
+             xmlns:local="clr-namespace:SoulmaskServerManager.Controls"
+             mc:Ignorable="d" 
+             Title="修改服务器名称"
+             PrimaryButtonText="保存"
+             SecondaryButtonText="取消"
+             DefaultButton="Primary"
+             d:DesignHeight="300" d:DesignWidth="500">
+    <StackPanel>
+        <TextBlock Text="当前名称：" FontSize="14" HorizontalAlignment="Center"/>
+
+        <TextBlock x:Name="OriginName" Text="{Binding ssmServerName}" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,8,0,16"/>
+
+        <TextBlock Text="新名称：" FontSize="14" HorizontalAlignment="Center"/>
+
+        <TextBox x:Name="ModifyName" Margin="0,8,0,0" Padding="8,4"
+                 HorizontalAlignment="Stretch" TextAlignment="Center" FontSize="18"
+                 InputMethod.IsInputMethodEnabled="True"
+                 InputMethod.PreferredImeConversionMode="Native"
+                 InputMethod.PreferredImeState="On"/>
+
+        <TextBlock x:Name="ErrorText" Visibility="Collapsed" Text="该名称已被其他服务器使用，请输入不同的名称" FontSize="12" Foreground="Red" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+
+        <TextBlock Text="（服务器的唯一识别 ID 不会改变，所有关联设置保持不变）" FontSize="11" Foreground="Gray" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+    </StackPanel>
+</ui:ContentDialog>

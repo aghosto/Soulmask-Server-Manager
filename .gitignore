@@ -389,5 +389,5 @@ key_correspondence_report.txt
 final_check.txt
 missing_keys.txt
 SSM.Tests/
-
+.codegraph
 ./Soulmask Server Manager.sln

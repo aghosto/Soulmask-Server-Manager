@@ -139,13 +139,13 @@
                                                         <TextBlock Text="导入服务器"/>
                                                     </DockPanel>
                                                 </Button>
-                                            <Button Grid.Column="1" Margin="5 10 5 5" Click="ChangeSaveButton_Click" ToolTip="打开服务器设置编辑器。" Height="35" HorizontalAlignment="Stretch">
+                                            <Button Grid.Column="1" Margin="5 10 5 5" Click="ChangeSaveButton_Click" ToolTip="打开服务器系数设置编辑器。" Height="35" HorizontalAlignment="Stretch">
                                                 <DockPanel>
                                                     <ui:SymbolIcon Symbol="Map"/>
                                                     <TextBlock Text="导入地图存档"/>
                                                 </DockPanel>
                                             </Button>
-                                            <Button Grid.Column="1" Margin="5 10 5 5" Click="ServerAccountExchangeButton_Click" ToolTip="打开服务器设置编辑器。" Height="35" HorizontalAlignment="Stretch">
+                                            <Button Grid.Column="1" Margin="5 10 5 5" Click="ServerAccountExchangeButton_Click" ToolTip="转移玩家数据" Height="35" HorizontalAlignment="Stretch">
                                                     <DockPanel>
                                                         <ui:SymbolIcon Symbol="People"/>
                                                         <TextBlock Text="集群玩家数据转移"/>
@@ -516,7 +516,7 @@
                                      VerticalScrollBarVisibility="Auto"
                                      HorizontalScrollBarVisibility="Auto"
                                      Margin="5"
-                                     FontSize="13"
+                                     FontSize="12"
                                      FontWeight="Black"/>
                     </Grid>
                 </TabItem>

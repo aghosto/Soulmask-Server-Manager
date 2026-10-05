@@ -415,14 +415,25 @@ namespace SoulmaskServerManager
         private void LoadFromServerPath(Server server)
         {
             var paths = new SSMPathManager(Directory.GetCurrentDirectory(), server);
-            if (File.Exists(paths.GameXishuDefaultPath))
+
+            if (!File.Exists(paths.GameXishuDefaultPath))
             {
-                try
+                string json = File.ReadAllText(paths.GameXishuDefaultPath);
+                LoadFromJson(json);
+            }
+            else
+            {
+                if (!File.Exists(paths.GameXishuDefaultPath))
+                    File.Create(paths.GameXishuDefaultPath);
+                else
                 {
-                    string json = File.ReadAllText(paths.GameXishuDefaultPath);
-                    LoadFromJson(json);
+                    try
+                    {
+                        string json = File.ReadAllText(paths.GameXishuDefaultPath);
+                        LoadFromJson(json);
+                    }
+                    catch { }
                 }
-                catch { }
             }
         }
 
@@ -453,7 +464,6 @@ namespace SoulmaskServerManager
                 if (!Directory.Exists(gameplayDir))
                     Directory.CreateDirectory(gameplayDir);
 
-                // 直接覆盖写入扁平配置（不再使用 0/1/2 三档位格式）
                 File.Copy(paths.GameXishuDefaultPath, paths.GameplaySettingsPath, overwrite: true);
             }
             catch { /* Silently handle write errors */ }

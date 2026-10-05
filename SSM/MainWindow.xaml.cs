@@ -2160,10 +2160,15 @@ public partial class MainWindow : Window
     private void ThemeSelect_Click(object sender, RoutedEventArgs e)
     {
         if (ThemeManager.Current.ApplicationTheme == ApplicationTheme.Light)
+        {
             SsmSettings.AppSettings.DarkMode = true;
+        }
         else
+        {
             SsmSettings.AppSettings.DarkMode = false;
-
+        }
+        SsmSettings.AppSettings.ConsoleOpacity = SsmSettings.AppSettings.WallpaperOpacity;
+        UpdateWallpaper();
         MainSettings.Save(SsmSettings);
     }
 
@@ -2881,15 +2886,26 @@ public partial class MainWindow : Window
                 bitmap.UriSource = new Uri(SsmSettings.AppSettings.WallpaperPath);
                 bitmap.EndInit();
                 BackgroundImage.Source = bitmap;
+
+                // 控制台背景使用独立的不透明度设置（默认黑色底）
+                double opacity = SsmSettings.AppSettings.ConsoleOpacity;
+                byte alpha = (byte)Math.Round(255 * opacity);
+                var consoleBrush = new SolidColorBrush(Color.FromArgb(alpha, 0, 0, 0));
+                MainMenuConsoleTextBox.Background = consoleBrush;
+                SoulmaskLogTextBox.Background = consoleBrush;
             }
             catch
             {
                 BackgroundImage.Source = null;
+                MainMenuConsoleTextBox.Background = Brushes.Black;
+                SoulmaskLogTextBox.Background = Brushes.Black;
             }
         }
         else
         {
             BackgroundImage.Source = null;
+            MainMenuConsoleTextBox.Background = Brushes.Black;
+            SoulmaskLogTextBox.Background = Brushes.Black;
         }
     }
 

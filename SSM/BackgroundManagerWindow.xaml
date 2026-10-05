@@ -38,10 +38,10 @@
         </StackPanel>
 
         <ListBox x:Name="ImageListBox" Grid.Row="1"
-                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                 SelectionChanged="ImageListBox_SelectionChanged"
-                 MouseDoubleClick="ImageListBox_MouseDoubleClick">
+         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+         ScrollViewer.VerticalScrollBarVisibility="Auto"
+         SelectionChanged="ImageListBox_SelectionChanged"
+         MouseDoubleClick="ImageListBox_MouseDoubleClick">
             <ListBox.ItemsPanel>
                 <ItemsPanelTemplate>
                     <primitives:UniformGrid Columns="3" />
@@ -60,11 +60,19 @@
         </ListBox>
 
         <DockPanel Grid.Row="2" Margin="0,10,0,0">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                <TextBlock Text="透明度：" VerticalAlignment="Center" FontSize="16"/>
-                <Slider x:Name="OpacitySlider" Width="220" Minimum="0.05" Maximum="1" LargeChange="0.1" SmallChange="0.05"
-                        ValueChanged="OpacitySlider_ValueChanged" Margin="5,0,5,0" VerticalAlignment="Center"/>
-                <TextBlock x:Name="OpacityValueText" Text="30%" VerticalAlignment="Center" FontSize="14" Width="50"/>
+            <StackPanel Orientation="Vertical" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <TextBlock Text="背景图不透明度：" VerticalAlignment="Center" FontSize="16"/>
+                    <Slider x:Name="OpacitySlider" Width="220" Minimum="0.05" Maximum="1" LargeChange="0.1" SmallChange="0.05"
+                    ValueChanged="OpacitySlider_ValueChanged" Margin="5,0,5,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="OpacityValueText" Text="30%" VerticalAlignment="Center" FontSize="14" Width="50"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,5,0,0">
+                    <TextBlock Text="控制台背景不透明度：" VerticalAlignment="Center" FontSize="16"/>
+                    <Slider x:Name="ConsoleOpacitySlider" Width="220" Minimum="0.05" Maximum="1" LargeChange="0.1" SmallChange="0.05"
+                    ValueChanged="ConsoleOpacitySlider_ValueChanged" Margin="5,0,5,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="ConsoleOpacityValueText" Text="30%" VerticalAlignment="Center" FontSize="14" Width="50"/>
+                </StackPanel>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="ResetButton" Click="ResetWallpaper_Click" Padding="15,5" ToolTip="清除当前背景图，恢复默认界面">

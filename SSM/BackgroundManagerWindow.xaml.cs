@@ -29,6 +29,8 @@ namespace SoulmaskServerManager
             if (mainWindow == null) return;
             OpacitySlider.Value = mainWindow.SsmSettings.AppSettings.WallpaperOpacity;
             OpacityValueText.Text = $"{(mainWindow.SsmSettings.AppSettings.WallpaperOpacity * 100):F0}%";
+            ConsoleOpacitySlider.Value = mainWindow.SsmSettings.AppSettings.ConsoleOpacity;
+            ConsoleOpacityValueText.Text = $"{(mainWindow.SsmSettings.AppSettings.ConsoleOpacity * 100):F0}%";
             _initialized = true;
         }
 
@@ -79,13 +81,18 @@ namespace SoulmaskServerManager
             LoadImages();
         }
 
-        private void DeleteImage_Click(object sender, RoutedEventArgs e)
+        private async void DeleteImage_Click(object sender, RoutedEventArgs e)
         {
             if (ImageListBox.SelectedItem is not ImageItem item) return;
 
-            var result = MessageBox.Show($"确定要删除背景图\"{item.FileName}\"吗？", "确认删除",
-                MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (result != MessageBoxResult.Yes) return;
+            var dialog = new ContentDialog
+            {
+                Title = "确认删除",
+                Content = $"确定要删除背景图\"{item.FileName}\"吗？",
+                PrimaryButtonText = "是",
+                SecondaryButtonText = "否"
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
             try
             {
@@ -95,7 +102,7 @@ namespace SoulmaskServerManager
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"删除失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                await new ContentDialog { Title = "错误", Content = $"删除失败：{ex.Message}", PrimaryButtonText = "确定" }.ShowAsync();
             }
         }
 
@@ -145,6 +152,19 @@ namespace SoulmaskServerManager
             double val = Math.Round(OpacitySlider.Value, 2);
             OpacityValueText.Text = $"{(val * 100):F0}%";
             mainWindow.SsmSettings.AppSettings.WallpaperOpacity = val;
+            MainSettings.Save(mainWindow.SsmSettings);
+        }
+
+        private void ConsoleOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (!_initialized) return;
+
+            var mainWindow = Application.Current.MainWindow as MainWindow;
+            if (mainWindow?.SsmSettings == null) return;
+
+            double val = Math.Round(ConsoleOpacitySlider.Value, 2);
+            ConsoleOpacityValueText.Text = $"{(val * 100):F0}%";
+            mainWindow.SsmSettings.AppSettings.ConsoleOpacity = val;
             mainWindow.UpdateWallpaper();
             MainSettings.Save(mainWindow.SsmSettings);
         }

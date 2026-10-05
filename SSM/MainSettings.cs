@@ -388,6 +388,12 @@ public class AppSettings : PropertyChangedBase
         get => _wallpaperOpacity;
         set => SetField(ref _wallpaperOpacity, value);
     }
+    private double _consoleOpacity = 0.3;
+    public double ConsoleOpacity
+    {
+        get => _consoleOpacity;
+        set => SetField(ref _consoleOpacity, value);
+    }
     private bool _wallpaperEnabled = false;
     public bool WallpaperEnabled
     {

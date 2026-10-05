@@ -207,7 +207,7 @@ namespace SoulmaskServerManager
         public static List<SteamMod> ParseModsFromHtml(string html)
         {
             var mods = new List<SteamMod>();
-            string panelStartTag = "<div class=\"tmIrUKf-Mh8- Panel\">";
+            string panelStartTag = "<div class=\"UNowfeldbNg- Panel\">";
             int searchFrom = 0;
 
             while (true)
@@ -260,7 +260,8 @@ namespace SoulmaskServerManager
 
                 string panelContent = html.Substring(start, end - start);
                 var mod = ParseModFromPanel(panelContent);
-                if (mod != null) mods.Add(mod);
+                if (mod != null) 
+                    mods.Add(mod);
 
                 searchFrom = end;
             }
@@ -276,7 +277,7 @@ namespace SoulmaskServerManager
 
             // Extract title from _3rvey4VpXts- div
             var titleMatch = Regex.Match(panelContent,
-                @"<div\s+class=""_3rvey4VpXts-"">\s*<a\s+href=""[^""]*"">(.*?)</a>",
+                @"<div\s+class=""Sw3NXcvOA4Y-"">\s*<a\s+href=""[^""]*"">(.*?)</a>",
                 RegexOptions.Singleline);
             string title = titleMatch.Success
                 ? HttpUtility.HtmlDecode(titleMatch.Groups[1].Value.Trim())
@@ -284,7 +285,7 @@ namespace SoulmaskServerManager
 
             // Extract author name + author URL from CmHGWYJjMk0- div
             var authorMatch = Regex.Match(panelContent,
-                @"<div\s+class=""CmHGWYJjMk0-"">\s*<a\s+href=""([^""]*)"">By\s+(.*?)</a>",
+                @"<div\s+class=""o14JIlvi52E-"">\s*<a\s+href=""([^""]*)"">By\s+(.*?)</a>",
                 RegexOptions.Singleline);
             string author = authorMatch.Success
                 ? HttpUtility.HtmlDecode(authorMatch.Groups[2].Value.Trim())

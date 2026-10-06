@@ -7,18 +7,37 @@
         xmlns:ui="http://schemas.modernwpf.com/2019" xmlns:local1="clr-namespace:SoulmaskServerManager.Controls"
         ui:WindowHelper.UseModernWindowStyle="True"
         mc:Ignorable="d"
-        Title="服务器导入窗口" Height="250" Width="350" WindowStartupLocation="CenterOwner">
-    <Grid>
+        Title="服务器导入窗口" Height="320" Width="650" MinWidth="560" WindowStartupLocation="CenterOwner">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <DockPanel Grid.Row="0" Margin="0,0,0,8">
+            <Button DockPanel.Dock="Right" Content="选择文件夹..." Padding="10,4" Click="BrowseSourceButton_Click"/>
+            <TextBlock Text="源服务器路径：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="SourcePathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+        </DockPanel>
+        <DockPanel Grid.Row="1" Margin="0,0,0,10">
+            <TextBlock Text="目标服务器路径：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="TargetPathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+        </DockPanel>
         <Border
+            Grid.Row="2"
             x:Name="DropArea"
             AllowDrop="True"
             Drop="DropArea_Drop"
             DragEnter="DropArea_DragEnter"
-            DragLeave="DropArea_DragLeave">
+            DragLeave="DropArea_DragLeave"
+            Background="White"
+            BorderBrush="#FF888888"
+            BorderThickness="1"
+            CornerRadius="4">
 
             <StackPanel VerticalAlignment="Center">
                 <TextBlock x:Name="ImportProgressText"
-                    Text="拖入服务器文件夹到这里"
+                    Text="拖入服务器文件夹到这里，也可以使用上方按钮选择"
                     Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                     FontSize="20"
                     HorizontalAlignment="Center"

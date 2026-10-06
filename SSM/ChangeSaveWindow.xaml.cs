@@ -9,24 +9,72 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using ModernWpf.Controls;
 using SoulmaskServerManager;
+using Microsoft.Win32;
 
 namespace SoulmaskServerManager
 {
     public partial class ChangeSaveWindow : Window
     {
         private Server _server;
-        private MainWindow _mainWindow = Application.Current.MainWindow as MainWindow;
         private bool _isImporting;
 
         public ChangeSaveWindow(Server server)
         {
             InitializeComponent();
             _server = server;
+            TargetPathTextBox.Text = Path.Combine(_server.Path, "WS", "Saved", "Worlds", "Dedicated");
             this.DragOver += (s, e) =>
             {
                 e.Effects = DragDropEffects.Copy;
                 e.Handled = true;
             };
+        }
+
+        private async void BrowseFileButton_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                Title = "选择地图存档或玩家数据文件",
+                Filter = "存档数据库 (*.db)|*.db",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+
+            if (dialog.ShowDialog(this) == true)
+                await ProcessSelectedPathAsync(dialog.FileName);
+        }
+
+        private async void BrowseFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            using var dialog = new System.Windows.Forms.FolderBrowserDialog
+            {
+                Description = "选择包含地图存档的服务器文件夹",
+                SelectedPath = Directory.Exists(SourcePathTextBox.Text) ? SourcePathTextBox.Text : Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
+            };
+
+            if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+                await ProcessSelectedPathAsync(dialog.SelectedPath);
+        }
+
+        private async Task ProcessSelectedPathAsync(string path)
+        {
+            if (_isImporting)
+                return;
+
+            _isImporting = true;
+            try
+            {
+                await ProcessDroppedPathAsync(path);
+            }
+            catch (Exception ex)
+            {
+                await ShowImportResultAsync("导入失败", ex.Message);
+            }
+            finally
+            {
+                _isImporting = false;
+                RestoreImportArea();
+            }
         }
 
         private void DropArea_Drop(object sender, DragEventArgs e)
@@ -41,8 +89,10 @@ namespace SoulmaskServerManager
             if (paths == null || paths.Length == 0)
                 return;
 
+            SourcePathTextBox.Text = Path.GetFullPath(paths[0]);
+
             _isImporting = true;
-            DropArea.Background = Brushes.Transparent;
+            DropArea.Background = Brushes.White;
 
             // Finish the native drag/drop event before showing dialogs or starting async work.
             Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(async () =>
@@ -54,21 +104,20 @@ namespace SoulmaskServerManager
                 }
                 catch (Exception ex)
                 {
-                    _mainWindow?.ShowLogMsg($"导入失败:{ex.Message}", Brushes.Red);
+                    await ShowImportResultAsync("导入失败", ex.Message);
                 }
                 finally
                 {
                     _isImporting = false;
                     IsEnabled = true;
-                    ImportSaveFileText.Text = "拖入服务器文件夹或存档文件到这里";
-                    ImportSaveFileText.Foreground = Brushes.LightGray;
-                    DropArea.Background = Brushes.Transparent;
+                    RestoreImportArea();
                 }
             }));
         }
 
         private async Task ProcessDroppedPathAsync(string firstPath)
         {
+            SourcePathTextBox.Text = Path.GetFullPath(firstPath);
             if (File.Exists(firstPath) && Path.GetFileName(firstPath).Equals("world.db", StringComparison.OrdinalIgnoreCase))
             {
                 await HandleDropWorldDb(firstPath);
@@ -117,6 +166,7 @@ namespace SoulmaskServerManager
             string targetDedicated = Path.Combine(_server.Path, "WS", "Saved", "Worlds", "Dedicated");
             string targetMapDir = Path.Combine(targetDedicated, mapFolder);
             string targetDbPath = Path.Combine(targetMapDir, "world.db");
+            TargetPathTextBox.Text = targetDbPath;
 
             if (!Directory.Exists(targetDedicated))
                 Directory.CreateDirectory(targetDedicated);
@@ -127,7 +177,7 @@ namespace SoulmaskServerManager
             {
                 Owner = this,
                 Title = "确认覆盖",
-                Content = $"确定要将存档导入到：\n{mapFolder}\n并覆盖现有 world.db 吗？",
+                Content = $"源文件：\n{dbFilePath}\n\n目标文件：\n{targetDbPath}\n\n确认覆盖吗？",
                 PrimaryButtonText = "确认覆盖",
                 SecondaryButtonText = "取消"
             };
@@ -137,23 +187,20 @@ namespace SoulmaskServerManager
             ImportSaveFileText.Text = "正在导入 world.db...";
             ImportSaveFileText.Foreground = Brushes.Orange;
 
-            await Task.Run(() =>
-            {
-                File.Copy(dbFilePath, targetDbPath, overwrite: true);
-            });
+            await CopyFileWithProgressAsync(dbFilePath, targetDbPath);
 
             var finalDialog = new ContentDialog
             {
                 Owner = this,
                 Title = "导入成功",
-                Content = $"存档已导入到 {mapFolder}",
+                Content = $"存档已导入到：\n{targetDbPath}",
                 PrimaryButtonText = "确定",
             };
             await finalDialog.ShowAsync();
 
             ImportSaveFileText.Text = "拖入服务器文件夹或存档文件到这里";
             ImportSaveFileText.Foreground = Brushes.LightGray;
-            DropArea.Background = Brushes.Transparent;
+            DropArea.Background = Brushes.White;
         }
 
         private async Task HandleDropFolder(string importRoot)
@@ -217,52 +264,49 @@ namespace SoulmaskServerManager
             {
                 Owner = this,
                 Title = "确认导入",
-                Content = $"即将导入存档：{(selectedMap == "Level01_Main" ? "云雾之森" : "金色浮沙")}",
+                Content = $"源目录：\n{importRoot}\n\n地图：{(selectedMap == "Level01_Main" ? "云雾之森" : "金色浮沙")}\n\n目标文件：\n{Path.Combine(targetDedicated, selectedMap, "world.db")}",
                 PrimaryButtonText = "确定导入",
                 SecondaryButtonText = "取消"
             };
             if (await confirm.ShowAsync() != ContentDialogResult.Primary)
                 return;
 
+            TargetPathTextBox.Text = Path.Combine(targetDedicated, selectedMap, "world.db");
+
             ImportSaveFileText.Text = "正在导入存档...请勿关闭窗口";
             ImportSaveFileText.Foreground = Brushes.Orange;
 
-            await Task.Run(() =>
-            {
-                string srcDb = Path.Combine(sourceDedicated, selectedMap, "world.db");
-                string targetMapDir = Path.Combine(targetDedicated, selectedMap);
-
-                if (!Directory.Exists(targetMapDir))
-                    Directory.CreateDirectory(targetMapDir);
-
-                string targetDb = Path.Combine(targetMapDir, "world.db");
-                File.Copy(srcDb, targetDb, overwrite: true);
-            });
+            string srcDb = Path.Combine(sourceDedicated, selectedMap, "world.db");
+            string targetMapDir = Path.Combine(targetDedicated, selectedMap);
+            Directory.CreateDirectory(targetMapDir);
+            string targetDb = Path.Combine(targetMapDir, "world.db");
+            await CopyFileWithProgressAsync(srcDb, targetDb);
 
             var finalDialog = new ContentDialog
             {
                 Owner = this,
                 Title = "导入成功",
-                Content = $"存档已导入到 {selectedMap}",
+                Content = $"存档已导入到：\n{targetDb}",
                 PrimaryButtonText = "确定",
             };
             await finalDialog.ShowAsync();
 
             ImportSaveFileText.Text = "拖入服务器文件夹或存档文件到这里";
             ImportSaveFileText.Foreground = Brushes.LightGray;
-            DropArea.Background = Brushes.Transparent;
+            DropArea.Background = Brushes.White;
         }
 
         private async Task HandleDropAccountDb(string accountFilePath)
         {
             string targetAccountDir = Path.Combine(_server.Path, "WS", "Saved", "Accounts");
             string targetAccountPath = Path.Combine(targetAccountDir, "account.db");
+            TargetPathTextBox.Text = targetAccountPath;
 
             var confirm = new ContentDialog
             {
                 Owner = this,
                 Title = "导入玩家数据",
-                Content = "确定要覆盖玩家数据 account.db 吗？",
+                Content = $"源文件：\n{accountFilePath}\n\n目标文件：\n{targetAccountPath}\n\n确认覆盖吗？",
                 PrimaryButtonText = "确认覆盖",
                 SecondaryButtonText = "取消"
             };
@@ -272,17 +316,14 @@ namespace SoulmaskServerManager
             ImportSaveFileText.Text = "正在导入玩家数据...";
             ImportSaveFileText.Foreground = Brushes.Orange;
 
-            await Task.Run(() =>
-            {
-                Directory.CreateDirectory(targetAccountDir);
-                File.Copy(accountFilePath, targetAccountPath, overwrite: true);
-            });
+            Directory.CreateDirectory(targetAccountDir);
+            await CopyFileWithProgressAsync(accountFilePath, targetAccountPath);
 
             var finalDialog = new ContentDialog
             {
                 Owner = this,
                 Title = "导入成功",
-                Content = "玩家数据 account.db 已导入完成！",
+                Content = $"玩家数据已导入到：\n{targetAccountPath}",
                 PrimaryButtonText = "确定"
             };
             await finalDialog.ShowAsync();
@@ -300,11 +341,64 @@ namespace SoulmaskServerManager
             e.Effects = DragDropEffects.Copy;
             e.Handled = true;
             DropArea.Background = new SolidColorBrush(Color.FromRgb(50, 50, 50));
+            ImportSaveFileText.Foreground = Brushes.White;
         }
 
         private void DropArea_DragLeave(object sender, DragEventArgs e)
         {
-            DropArea.Background = Brushes.Transparent;
+            DropArea.Background = Brushes.White;
+            ImportSaveFileText.Foreground = Brushes.Black;
+        }
+
+        private async Task CopyFileWithProgressAsync(string sourcePath, string targetPath)
+        {
+            if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("源文件与目标文件相同，无法导入。");
+
+            ImportProgressFileText.Visibility = Visibility.Visible;
+            ImportProgressBar.Visibility = Visibility.Visible;
+            ImportProgressBar.Value = 0;
+            ImportSaveFileText.Text = "正在导入，请勿关闭窗口……";
+            ImportSaveFileText.Foreground = Brushes.DarkOrange;
+
+            long totalBytes = new FileInfo(sourcePath).Length;
+            long copiedBytes = 0;
+            byte[] buffer = new byte[1024 * 1024];
+            await using var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, buffer.Length, useAsync: true);
+            await using var output = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None, buffer.Length, useAsync: true);
+
+            int bytesRead;
+            while ((bytesRead = await input.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            {
+                await output.WriteAsync(buffer, 0, bytesRead);
+                copiedBytes += bytesRead;
+                int percent = totalBytes > 0 ? (int)(copiedBytes * 100 / totalBytes) : 100;
+                ImportProgressBar.Value = percent;
+                ImportProgressFileText.Text = $"正在复制：{Path.GetFileName(sourcePath)}（{percent}%）";
+            }
+
+            ImportProgressBar.Value = 100;
+            ImportProgressFileText.Text = "复制完成";
+        }
+
+        private void RestoreImportArea()
+        {
+            ImportSaveFileText.Text = "拖入服务器文件夹、world.db 或 account.db 到这里";
+            ImportSaveFileText.Foreground = Brushes.Black;
+            ImportProgressFileText.Visibility = Visibility.Collapsed;
+            ImportProgressBar.Visibility = Visibility.Collapsed;
+            DropArea.Background = Brushes.White;
+        }
+
+        private async Task ShowImportResultAsync(string title, string message)
+        {
+            await new ContentDialog
+            {
+                Owner = this,
+                Title = title,
+                Content = message,
+                PrimaryButtonText = "确定"
+            }.ShowAsync();
         }
     }
 }

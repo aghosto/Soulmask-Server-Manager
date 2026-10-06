@@ -22,6 +22,8 @@ namespace SoulmaskServerManager
         {
             InitializeComponent();
             _server = server;
+            TargetPathTextBox.Text = GetDefaultTargetPath();
+            StatusTextBlock.Text = "请选择源文件。目标路径默认为当前服务器的 WS\\Saved\\Accounts\\account.db。";
 
             UseRecentConflictCheckBox.Checked += ConflictOption_Checked;
             UseRecentConflictCheckBox.Unchecked += ConflictOption_Unchecked;
@@ -33,6 +35,8 @@ namespace SoulmaskServerManager
         }
 
         private async void BrowseSourceButton_Click(object sender, RoutedEventArgs e) => await BrowseSourceFileAsync();
+
+        private async void BrowseTargetButton_Click(object sender, RoutedEventArgs e) => await BrowseTargetFileAsync();
 
         private async void DropArea_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
@@ -53,6 +57,42 @@ namespace SoulmaskServerManager
             if (dialog.ShowDialog(this) == true)
                 await SetSourceFileAsync(dialog.FileName);
         }
+
+        private async Task BrowseTargetFileAsync()
+        {
+            string currentTarget = TargetPathTextBox.Text;
+            string initialDirectory = Path.GetDirectoryName(currentTarget);
+            if (string.IsNullOrWhiteSpace(initialDirectory) || !Directory.Exists(initialDirectory))
+                initialDirectory = Directory.Exists(_server.Path) ? _server.Path : Environment.CurrentDirectory;
+
+            var dialog = new SaveFileDialog
+            {
+                Title = "选择目标数据库文件",
+                Filter = "数据库文件 (*.db)|*.db",
+                DefaultExt = ".db",
+                AddExtension = true,
+                OverwritePrompt = false,
+                InitialDirectory = initialDirectory,
+                FileName = string.IsNullOrWhiteSpace(currentTarget) ? "account.db" : Path.GetFileName(currentTarget)
+            };
+
+            if (dialog.ShowDialog(this) == true)
+            {
+                string path = dialog.FileName;
+                if (!string.Equals(Path.GetExtension(path), ".db", StringComparison.OrdinalIgnoreCase))
+                {
+                    await ShowNoticeAsync("文件类型不正确", "目标文件必须是 .db 文件。");
+                }
+                else
+                {
+                    TargetPathTextBox.Text = Path.GetFullPath(path);
+                    StatusTextBlock.Text = "已选择目标文件路径。";
+                }
+            }
+
+        }
+
+        private string GetDefaultTargetPath() => Path.Combine(_server.Path, "WS", "Saved", "Accounts", "account.db");
 
         private void DropArea_DragEnter(object sender, DragEventArgs e)
         {
@@ -125,7 +165,7 @@ namespace SoulmaskServerManager
             string fullPath = Path.GetFullPath(path);
             SourcePathTextBox.Text = fullPath;
             DropAreaTextBlock.Text = $"已选择源文件：{Path.GetFileName(fullPath)}";
-            StatusTextBlock.Text = "已选择源文件。目标为当前服务器的 WS\\Saved\\Accounts\\account.db。";
+            StatusTextBlock.Text = "已选择源文件和目标文件路径。";
         }
 
         private void ConflictOption_Checked(object sender, RoutedEventArgs e)
@@ -172,7 +212,15 @@ namespace SoulmaskServerManager
                 return;
             }
 
-            string targetPath = Path.Combine(_server.Path, "WS", "Saved", "Accounts", "account.db");
+            string targetPath = TargetPathTextBox.Text;
+            if (string.IsNullOrWhiteSpace(targetPath)
+                || !string.Equals(Path.GetExtension(targetPath), ".db", StringComparison.OrdinalIgnoreCase))
+            {
+                await ShowNoticeAsync("缺少目标文件", "请选择一个 .db 目标文件路径。");
+                return;
+            }
+
+            targetPath = Path.GetFullPath(targetPath);
             if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
             {
                 await ShowNoticeAsync("路径冲突", "源文件与目标文件相同，无法进行转移。");
@@ -243,7 +291,7 @@ namespace SoulmaskServerManager
                     {
                         Owner = this,
                         Title = "转移成功",
-                        Content = $"已将源文件中的玩家数据转移到集群主服务器。\n\n{standardOutput}".Trim(),
+                        Content = SummarizeTransferResult(standardOutput),
                         PrimaryButtonText = "确定"
                     }.ShowAsync();
                 }
@@ -287,6 +335,30 @@ namespace SoulmaskServerManager
                 Content = message,
                 PrimaryButtonText = "确定"
             }.ShowAsync();
+        }
+
+        private static string SummarizeTransferResult(string standardOutput)
+        {
+            string[] lines = (standardOutput ?? string.Empty)
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            int processedCount = 0;
+            foreach (string line in lines)
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(
+                    line,
+                    @"(?:角色|玩家|存档|account|role|player|record)[^0-9]{0,20}(\d+)|(\d+)[^\r\n]{0,20}(?:角色|玩家|存档|account|role|player|record)",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (match.Success && int.TryParse(match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value, out int count))
+                    processedCount += count;
+            }
+
+            if (processedCount > 0)
+                return $"玩家数据转移已完成，共处理 {processedCount} 条角色/存档记录。";
+
+            int resultLineCount = lines.Length;
+            return resultLineCount == 0
+                ? "玩家数据转移已完成，工具未返回额外结果信息。"
+                : $"玩家数据转移已完成，工具返回了 {resultLineCount} 条结果信息。";
         }
     }
 }

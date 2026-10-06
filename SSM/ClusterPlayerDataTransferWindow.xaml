@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.modernwpf.com/2019"
         ui:WindowHelper.UseModernWindowStyle="True"
-        Title="集群玩家数据转移" Height="390" Width="700"
+        Title="集群玩家数据转移" Height="430" Width="700"
         MinHeight="350" MinWidth="600" WindowStartupLocation="CenterOwner">
     <Grid Margin="14">
         <Grid.RowDefinitions>
@@ -14,11 +14,18 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" Margin="0,0,0,12">
-            <Button DockPanel.Dock="Right" Content="选择文件..." Padding="12,5" Click="BrowseSourceButton_Click"/>
-            <TextBlock Text="源文件路径：" VerticalAlignment="Center" Margin="0,0,8,0"/>
-            <TextBox x:Name="SourcePathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
-        </DockPanel>
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <DockPanel Margin="0,0,0,6">
+                <Button DockPanel.Dock="Right" Content="选择文件..." Padding="12,5" Click="BrowseSourceButton_Click"/>
+                <TextBlock Text="源文件路径：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="SourcePathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+            </DockPanel>
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="选择路径..." Padding="12,5" Click="BrowseTargetButton_Click"/>
+                <TextBlock Text="目标路径：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="TargetPathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+            </DockPanel>
+        </StackPanel>
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
             <CheckBox x:Name="UseRecentConflictCheckBox" Content="角色冲突时使用最近的存档"
@@ -42,7 +49,7 @@
         </Border>
 
         <TextBlock Grid.Row="3" x:Name="StatusTextBlock" Margin="0,10,0,10"
-                   Text="请选择源文件。目标文件为当前服务器的 WS\Saved\Accounts\account.db。"
+                   Text="请选择源文件和目标文件路径。"
                    TextWrapping="Wrap" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
 
         <Button Grid.Row="4" x:Name="TransferButton" Content="服务器/本地存档转集群主服务器"

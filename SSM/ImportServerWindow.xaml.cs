@@ -24,11 +24,44 @@ namespace SoulmaskServerManager
         {
             InitializeComponent();
             _server = server;
+            TargetPathTextBox.Text = _server.Path;
             this.DragOver += (s, e) =>
             {
                 e.Effects = DragDropEffects.Copy;
                 e.Handled = true;
             };
+        }
+
+        private void BrowseSourceButton_Click(object sender, RoutedEventArgs e)
+        {
+            using var dialog = new System.Windows.Forms.FolderBrowserDialog
+            {
+                Description = "选择服务器文件夹或 steamapps 文件夹",
+                SelectedPath = Directory.Exists(SourcePathTextBox.Text) ? SourcePathTextBox.Text : Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
+            };
+
+            if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            {
+                SourcePathTextBox.Text = dialog.SelectedPath;
+                _ = StartImportFromSourceAsync(dialog.SelectedPath);
+            }
+        }
+
+        private async Task StartImportFromSourceAsync(string sourcePath)
+        {
+            if (_isImporting)
+                return;
+
+            _isImporting = true;
+            try
+            {
+                await ImportDroppedPathAsync(sourcePath);
+            }
+            finally
+            {
+                _isImporting = false;
+                DropArea.Background = Brushes.White;
+            }
         }
         private void DropArea_Drop(object sender, DragEventArgs e)
         {
@@ -65,6 +98,7 @@ namespace SoulmaskServerManager
         {
             try
             {
+                SourcePathTextBox.Text = Path.GetFullPath(importPath);
                 string targetPath = _server.Path;
                 string sourceFolderToCopy = "";
 
@@ -101,12 +135,16 @@ namespace SoulmaskServerManager
                 var yesDialog = new ContentDialog()
                 {
                     Owner = this,
-                    Content = $"是否导入服务器文件夹路径：{sourceFolderToCopy}",
+                    Title = "确认导入服务器",
+                    Content = $"源路径：\n{sourceFolderToCopy}\n\n目标路径：\n{targetPath}\n\n是否开始导入？",
                     PrimaryButtonText = "确认",
                     SecondaryButtonText = "取消"
                 };
                 if (await yesDialog.ShowAsync() is ContentDialogResult.Secondary)
                     return;
+
+                if (PathsOverlap(sourceFolderToCopy, targetPath))
+                    throw new InvalidOperationException("源服务器目录与目标服务器目录相同或相互包含，无法安全导入。");
 
                 ImportProgressText.Text = "服务器导入中，请勿关闭本窗口";
                 ImportProgressText.Foreground = Brushes.Orange;
@@ -171,8 +209,8 @@ namespace SoulmaskServerManager
                     Owner = this,
                     Title = "服务器导入结果",
                     Content = applicationSettingsSynced
-                        ? "服务器导入成功，应用设置中的 RCON 信息和订阅 Mod 列表已同步。"
-                        : "服务器导入成功，但未找到对应的应用服务器配置，RCON 设置和订阅 Mod 列表未能同步。",
+                        ? $"服务器文件已导入到：\n{targetPath}\n\n应用设置中的 RCON 信息和订阅 Mod 列表已同步。"
+                        : $"服务器文件已导入到：\n{targetPath}\n\n未找到对应的应用服务器配置，RCON 设置和订阅 Mod 列表未能同步。",
                     PrimaryButtonText = "确定"
                 }.ShowAsync();
                 this.Close();
@@ -224,6 +262,15 @@ namespace SoulmaskServerManager
             server.RconServerSettings.Password = importedSettings.Rcon?.Password ?? "";
         }
 
+        private static bool PathsOverlap(string firstPath, string secondPath)
+        {
+            string first = Path.GetFullPath(firstPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string second = Path.GetFullPath(secondPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return first.Equals(second, StringComparison.OrdinalIgnoreCase)
+                || first.StartsWith(second + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || second.StartsWith(first + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+
         private void DropArea_DragEnter(object sender, DragEventArgs e)
         {
             e.Effects = DragDropEffects.Copy;
@@ -233,7 +280,7 @@ namespace SoulmaskServerManager
 
         private void DropArea_DragLeave(object sender, DragEventArgs e)
         {
-            DropArea.Background = new SolidColorBrush(Color.FromRgb(255, 255, 255));
+            DropArea.Background = Brushes.White;
         }
 
         private void DirectoryCopy(string sourceDir, string destDir, IProgress<ImportCopyProgress> progress)

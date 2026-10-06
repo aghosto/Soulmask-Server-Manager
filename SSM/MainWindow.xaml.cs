@@ -2263,7 +2263,8 @@ public partial class MainWindow : Window
         else
         {
             window = new (server);
-            window.Show();
+            window.Owner = this;
+            window.ShowDialog();
         }
     }
 

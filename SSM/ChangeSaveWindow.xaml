@@ -6,23 +6,46 @@
       xmlns:ui="http://schemas.modernwpf.com/2019" xmlns:local1="clr-namespace:SoulmaskServerManager.Controls"
       ui:WindowHelper.UseModernWindowStyle="True"
       mc:Ignorable="d" 
-      Title="服务器导入窗口" Height="250" Width="350" WindowStartupLocation="CenterOwner">
+      Title="导入地图存档" Height="420" Width="700" MinHeight="360" MinWidth="600" WindowStartupLocation="CenterOwner">
 
-    <Grid>
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <DockPanel Grid.Row="0" Margin="0,0,0,7">
+            <Button DockPanel.Dock="Right" Content="选择文件夹..." Padding="10,4" Click="BrowseFolderButton_Click"/>
+            <Button DockPanel.Dock="Right" Content="选择 .db 文件..." Padding="10,4" Margin="0,0,6,0" Click="BrowseFileButton_Click"/>
+            <TextBlock Text="源路径：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="SourcePathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+        </DockPanel>
+        <DockPanel Grid.Row="1" Margin="0,0,0,10">
+            <TextBlock Text="目标位置：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="TargetPathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+        </DockPanel>
         <Border
+        Grid.Row="2"
         x:Name="DropArea"
         AllowDrop="True"
         Drop="DropArea_Drop"
         DragEnter="DropArea_DragEnter"
-        DragLeave="DropArea_DragLeave">
+        DragLeave="DropArea_DragLeave"
+        Background="White"
+        BorderBrush="#FF888888"
+        BorderThickness="1"
+        CornerRadius="4">
 
             <StackPanel VerticalAlignment="Center">
                 <TextBlock x:Name="ImportSaveFileText"
-                Text="拖入服务器文件夹或存档文件到这里"
+                Text="拖入服务器文件夹、world.db 或 account.db 到这里"
                 Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                 FontSize="20"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"/> 
+                <TextBlock x:Name="ImportProgressFileText" Visibility="Collapsed" TextTrimming="CharacterEllipsis" Margin="12,10,12,2" HorizontalAlignment="Center"/>
+                <ProgressBar x:Name="ImportProgressBar" Visibility="Collapsed" Minimum="0" Maximum="100" Height="12" Margin="16,0,16,8"/>
                 <Separator Margin="5"/>
                 <TextBlock
                 Text="若原存档为集群主服务器"
@@ -44,5 +67,6 @@
                 VerticalAlignment="Center"/>
             </StackPanel>
         </Border>
+        <TextBlock Grid.Row="3" Margin="0,8,0,0" Text="目标地图由选择的地图存档决定；account.db 将写入服务器的 Accounts 目录。" TextWrapping="Wrap" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
     </Grid>
 </Window>

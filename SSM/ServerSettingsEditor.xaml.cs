@@ -258,7 +258,7 @@ namespace SoulmaskServerManager
             }
         }
 
-        private void CheckAndLoadSettingsFile(int serverIndex)
+        private async void CheckAndLoadSettingsFile(int serverIndex)
         {
             _loadedServerIndex = serverIndex;
             string settingsFilePath = Path.Combine(servers[serverIndex].Path, @"SaveData\Settings\ServerSettings.json");
@@ -279,8 +279,13 @@ namespace SoulmaskServerManager
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"加载失败：{ex.Message}", "错误",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                await new ContentDialog
+                {
+                    Owner = this,
+                    Title = "错误",
+                    Content = $"加载失败：{ex.Message}",
+                    PrimaryButtonText = "确定"
+                }.ShowAsync();
                 Close();
             }
         }

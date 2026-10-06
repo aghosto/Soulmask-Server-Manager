@@ -32,15 +32,15 @@ namespace SoulmaskServerManager
             UseRecentConflictCheckBox.IsChecked = true;
         }
 
-        private void BrowseSourceButton_Click(object sender, RoutedEventArgs e) => BrowseSourceFile();
+        private async void BrowseSourceButton_Click(object sender, RoutedEventArgs e) => await BrowseSourceFileAsync();
 
-        private void DropArea_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private async void DropArea_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             e.Handled = true;
-            BrowseSourceFile();
+            await BrowseSourceFileAsync();
         }
 
-        private void BrowseSourceFile()
+        private async Task BrowseSourceFileAsync()
         {
             var dialog = new OpenFileDialog
             {
@@ -51,7 +51,7 @@ namespace SoulmaskServerManager
             };
 
             if (dialog.ShowDialog(this) == true)
-                SetSourceFile(dialog.FileName);
+                await SetSourceFileAsync(dialog.FileName);
         }
 
         private void DropArea_DragEnter(object sender, DragEventArgs e)
@@ -105,20 +105,20 @@ namespace SoulmaskServerManager
 
             string droppedPath = paths[0];
             // Defer UI work until the native drag/drop loop has returned.
-            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => SetSourceFile(droppedPath)));
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(async () => await SetSourceFileAsync(droppedPath)));
         }
 
-        private void SetSourceFile(string path)
+        private async Task SetSourceFileAsync(string path)
         {
             if (!string.Equals(Path.GetExtension(path), ".db", StringComparison.OrdinalIgnoreCase))
             {
-                MessageBox.Show(this, "源文件必须是 .db 文件。", "文件类型不正确", MessageBoxButton.OK, MessageBoxImage.Warning);
+                await ShowNoticeAsync("文件类型不正确", "源文件必须是 .db 文件。");
                 return;
             }
 
             if (!File.Exists(path))
             {
-                MessageBox.Show(this, $"找不到文件：\n{path}", "文件不存在", MessageBoxButton.OK, MessageBoxImage.Warning);
+                await ShowNoticeAsync("文件不存在", $"找不到文件：\n{path}");
                 return;
             }
 
@@ -168,21 +168,21 @@ namespace SoulmaskServerManager
             if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath)
                 || !string.Equals(Path.GetExtension(sourcePath), ".db", StringComparison.OrdinalIgnoreCase))
             {
-                MessageBox.Show(this, "请先选择或拖入一个存在的 .db 源文件。", "缺少源文件", MessageBoxButton.OK, MessageBoxImage.Warning);
+                await ShowNoticeAsync("缺少源文件", "请先选择或拖入一个存在的 .db 源文件。");
                 return;
             }
 
             string targetPath = Path.Combine(_server.Path, "WS", "Saved", "Accounts", "account.db");
             if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
             {
-                MessageBox.Show(this, "源文件与目标文件相同，无法进行转移。", "路径冲突", MessageBoxButton.OK, MessageBoxImage.Warning);
+                await ShowNoticeAsync("路径冲突", "源文件与目标文件相同，无法进行转移。");
                 return;
             }
 
             string copyRolesPath = Path.Combine(_server.Path, "WS", "Plugins", "DBAgent", "ThirdParty", "Binaries", "CopyRoles.exe");
             if (!File.Exists(copyRolesPath))
             {
-                MessageBox.Show(this, $"未找到 CopyRoles.exe：\n{copyRolesPath}", "缺少转移工具", MessageBoxButton.OK, MessageBoxImage.Error);
+                await ShowNoticeAsync("缺少转移工具", $"未找到 CopyRoles.exe：\n{copyRolesPath}");
                 return;
             }
 
@@ -276,6 +276,17 @@ namespace SoulmaskServerManager
                 _isTransferring = false;
                 TransferButton.IsEnabled = true;
             }
+        }
+
+        private async Task ShowNoticeAsync(string title, string message)
+        {
+            await new ContentDialog
+            {
+                Owner = this,
+                Title = title,
+                Content = message,
+                PrimaryButtonText = "确定"
+            }.ShowAsync();
         }
     }
 }

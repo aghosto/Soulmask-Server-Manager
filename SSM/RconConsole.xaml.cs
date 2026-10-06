@@ -1,5 +1,6 @@
 ﻿using SoulmaskServerManager;
 using SoulmaskServerManager.RCON;
+using ModernWpf.Controls;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -167,7 +168,7 @@ namespace SoulmaskServerManager
             };
         }
 
-        private void ConnectButton_Click(object sender, RoutedEventArgs e)
+        private async void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
@@ -176,7 +177,13 @@ namespace SoulmaskServerManager
             }
             catch (Exception ex)
             {
-                MessageBox.Show(ex.Message);
+                await new ContentDialog
+                {
+                    Owner = this,
+                    Title = "连接失败",
+                    Content = ex.Message,
+                    PrimaryButtonText = "确定"
+                }.ShowAsync();
             }
         }
 

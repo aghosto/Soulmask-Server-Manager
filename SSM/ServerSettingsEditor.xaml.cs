@@ -31,6 +31,7 @@ namespace SoulmaskServerManager
                                                                             };
         private readonly ObservableCollection<Server> servers;
         private MainSettings mainSettings;
+        private int _loadedServerIndex = -1;
 
         public class ServerListItem
         {
@@ -259,6 +260,7 @@ namespace SoulmaskServerManager
 
         private void CheckAndLoadSettingsFile(int serverIndex)
         {
+            _loadedServerIndex = serverIndex;
             string settingsFilePath = Path.Combine(servers[serverIndex].Path, @"SaveData\Settings\ServerSettings.json");
 
             try
@@ -421,14 +423,82 @@ namespace SoulmaskServerManager
                 using (StreamReader reader = new StreamReader(FileToLoad))
                 {
                     string LoadedJSON = reader.ReadToEnd();
-                    ServerSettings LoadedSettings = LoadServerSettings(LoadedJSON);
+                    ServerSettings LoadedSettings = System.Text.Json.JsonSerializer.Deserialize<ServerSettings>(LoadedJSON)
+                        ?? throw new System.Text.Json.JsonException("配置文件内容为空或格式无效。");
                     serverSettings = LoadedSettings;
                     DataContext = serverSettings;
+                    InitializeEditorUI();
                 }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                throw;
+                _ = new ContentDialog
+                {
+                    Title = "导入失败",
+                    Content = $"无法读取服务器设置文件：{ex.Message}",
+                    CloseButtonText = "确定",
+                    DefaultButton = ContentDialogButton.Close
+                }.ShowAsync();
+            }
+        }
+
+        private string SerializeCurrentState()
+        {
+            return System.Text.Json.JsonSerializer.Serialize(serverSettings, serializerOptions);
+        }
+
+        private async void ResetToDefault_Click(object sender, RoutedEventArgs e)
+        {
+            ContentDialog resetDialog = new()
+            {
+                Title = "重置服务器连接配置",
+                Content = "确定将当前服务器连接配置重置为默认值吗？",
+                PrimaryButtonText = "重置",
+                SecondaryButtonText = "取消",
+                DefaultButton = ContentDialogButton.Secondary
+            };
+
+            if (await resetDialog.ShowAsync() != ContentDialogResult.Primary)
+                return;
+
+            serverSettings = new ServerSettings();
+            DataContext = serverSettings;
+            InitializeEditorUI();
+        }
+
+        private void FileMenuExport_Click(object sender, RoutedEventArgs e)
+        {
+            SaveFileDialog dialog = new()
+            {
+                Filter = "JSON files|*.json",
+                DefaultExt = "json",
+                FileName = "ServerSettings.json",
+                InitialDirectory = Directory.GetCurrentDirectory()
+            };
+
+            if (dialog.ShowDialog() != true) return;
+
+            try
+            {
+                string json = SerializeCurrentState();
+                File.WriteAllText(dialog.FileName, json);
+                _ = new ModernWpf.Controls.ContentDialog
+                {
+                    Title = "导出成功",
+                    Content = $"配置已导出至：\n{dialog.FileName}",
+                    CloseButtonText = "确定",
+                    DefaultButton = ModernWpf.Controls.ContentDialogButton.Close
+                }.ShowAsync();
+            }
+            catch (Exception ex)
+            {
+                _ = new ModernWpf.Controls.ContentDialog
+                {
+                    Title = "错误",
+                    Content = $"导出失败：{ex.Message}",
+                    CloseButtonText = "确定",
+                    DefaultButton = ModernWpf.Controls.ContentDialogButton.Close
+                }.ShowAsync();
             }
         }
 
@@ -456,7 +526,10 @@ namespace SoulmaskServerManager
 
                 if (await yesNoDialog.ShowAsync() is ContentDialogResult.Primary)
                 {
-                    EditorSaveDialog dialog = new(servers)
+                    Server? currentServer = _loadedServerIndex >= 0 && _loadedServerIndex < servers.Count
+                        ? servers[_loadedServerIndex]
+                        : servers.FirstOrDefault(server => server.UniqueId == serverSettings.SelfServerUniqueId);
+                    EditorSaveDialog dialog = new(servers, currentServer)
                     {
                         PrimaryButtonText = "保存",
                         CloseButtonText = "取消"

@@ -2241,7 +2241,8 @@ public partial class MainWindow : Window
         else
         {
             window = new (server);
-            window.Show();
+            window.Owner = this;
+            window.ShowDialog();
         }
     }
 
@@ -2266,153 +2267,25 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void ServerAccountExchangeButton_Click(object sender, RoutedEventArgs e)
+    private void ClusterPlayerDataTransferButton_Click(object sender, RoutedEventArgs e)
     {
-        try
+        if (((Button)sender).DataContext is not Server server)
+            return;
+
+        var window = Application.Current.Windows.OfType<ClusterPlayerDataTransferWindow>().FirstOrDefault();
+        if (window != null)
         {
-            Server server = ((Button)sender).DataContext as Server;
-            if (server == null) return;
-
-            var confirmDialog = new ContentDialog
-            {
-                Title = "玩家数据转移",
-                Content = "确定要执行玩家数据转移吗？\n\n冲突时优先使用源存档数据",
-                PrimaryButtonText = "确定",
-                SecondaryButtonText = "取消"
-            };
-            if (await confirmDialog.ShowAsync() != ContentDialogResult.Primary)
-                return;
-
-            string mainPath = Path.Combine(_ssmPathManager.DedicatedPath, "Level01_Main", "world.db");
-            string dlcPath = Path.Combine(_ssmPathManager.DedicatedPath, "DLC_Level01_Main", "world.db");
-            string targetDb = Path.Combine(_ssmPathManager.SavedDir, "Accounts", "account.db");
-            string copyRolesExe = Path.Combine(_ssmPathManager.PluginDir, "DBAgent", "ThirdParty", "Binaries", "CopyRoles.exe");
-
-            if (!File.Exists(copyRolesExe))
-            {
-                await new ContentDialog
-                {
-                    Title = "错误",
-                    Content = $"未找到转移工具：\n{copyRolesExe}",
-                    PrimaryButtonText = "确定"
-                }.ShowAsync();
-                return;
-            }
-
-            bool hasMain = File.Exists(mainPath);
-            bool hasDLC = File.Exists(dlcPath);
-
-            if (!hasMain && !hasDLC)
-            {
-                await new ContentDialog
-                {
-                    Title = "无存档",
-                    Content = $"未找到任何地图的 world.db 存档",
-                    PrimaryButtonText = "确定"
-                }.ShowAsync();
-                return;
-            }
-
-            string selectedSourceDb = null;
-            string mapName = "";
-
-            if (hasMain && hasDLC)
-            {
-                var mapDialog = new ContentDialog
-                {
-                    Title = "选择源地图",
-                    Content = "请选择要从哪个地图读取玩家数据：",
-                    PrimaryButtonText = "云雾之森",
-                    SecondaryButtonText = "金色浮沙"
-                };
-                var res = await mapDialog.ShowAsync();
-
-                if (res == ContentDialogResult.Primary)
-                {
-                    selectedSourceDb = mainPath;
-                    mapName = "云雾之森";
-                }
-                else
-                {
-                    selectedSourceDb = dlcPath;
-                    mapName = "金色浮沙";
-                }
-            }
-            else
-            {
-                if (hasMain)
-                {
-                    selectedSourceDb = mainPath;
-                    mapName = "云雾之森";
-                }
-                else
-                {
-                    selectedSourceDb = dlcPath;
-                    mapName = "金色浮沙";
-                }
-            }
-
-            var finalConfirm = new ContentDialog
-            {
-                Title = "开始转移",
-                Content = $"源地图：{mapName}\n\n确定执行转移？",
-                PrimaryButtonText = "开始",
-                SecondaryButtonText = "取消"
-            };
-            if (await finalConfirm.ShowAsync() != ContentDialogResult.Primary)
-                return;
-
-            var processing = new ContentDialog
-            {
-                Title = "转移中",
-                Content = "正在执行玩家数据转移...\n请勿关闭程序",
-                IsPrimaryButtonEnabled = false
-            };
-            var _ = processing.ShowAsync();
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = copyRolesExe,
-                Arguments = $"-src=\"{selectedSourceDb}\" -dst=\"{targetDb}\" -type=1",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-
-            using var process = Process.Start(psi);
-            await Task.Run(() => process.WaitForExit());
-            processing.Hide();
-
-            if (process.ExitCode == 0)
-            {
-                await new ContentDialog
-                {
-                    Title = "转移成功",
-                    Content = $"从【{mapName}】转移玩家数据完成！",
-                    PrimaryButtonText = "确定"
-                }.ShowAsync(); 
-            }
-            else
-            {
-                string err = process.StandardError.ReadToEnd();
-                await new ContentDialog
-                {
-                    Title = "转移失败",
-                    Content = $"错误代码：{process.ExitCode}\n{err}",
-                    PrimaryButtonText = "确定"
-                }.ShowAsync();
-            }
+            window.Activate();
+            window.Topmost = true;
+            window.Topmost = false;
+            return;
         }
-        catch (Exception ex)
+
+        window = new ClusterPlayerDataTransferWindow(server)
         {
-            await new ContentDialog
-            {
-                Title = "异常",
-                Content = $"ex.Message",
-                PrimaryButtonText = "确定"
-            }.ShowAsync();
-        }
+            Owner = this
+        };
+        window.ShowDialog();
     }
 
     private void ServerSettingsEditorButton_Click(object sender, RoutedEventArgs e)

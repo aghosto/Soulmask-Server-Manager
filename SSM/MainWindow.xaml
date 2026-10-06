@@ -145,7 +145,7 @@
                                                     <TextBlock Text="导入地图存档"/>
                                                 </DockPanel>
                                             </Button>
-                                            <Button Grid.Column="1" Margin="5 10 5 5" Click="ServerAccountExchangeButton_Click" ToolTip="转移玩家数据" Height="35" HorizontalAlignment="Stretch">
+                                            <Button Grid.Column="1" Margin="5 10 5 5" Click="ClusterPlayerDataTransferButton_Click" ToolTip="打开集群玩家数据转移窗口" Height="35" HorizontalAlignment="Stretch">
                                                     <DockPanel>
                                                         <ui:SymbolIcon Symbol="People"/>
                                                         <TextBlock Text="集群玩家数据转移"/>

@@ -1,0 +1,51 @@
+<Window x:Class="SoulmaskServerManager.ClusterPlayerDataTransferWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.modernwpf.com/2019"
+        ui:WindowHelper.UseModernWindowStyle="True"
+        Title="集群玩家数据转移" Height="390" Width="700"
+        MinHeight="350" MinWidth="600" WindowStartupLocation="CenterOwner">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,12">
+            <Button DockPanel.Dock="Right" Content="选择文件..." Padding="12,5" Click="BrowseSourceButton_Click"/>
+            <TextBlock Text="源文件路径：" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="SourcePathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+        </DockPanel>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
+            <CheckBox x:Name="UseRecentConflictCheckBox" Content="角色冲突时使用最近的存档"
+                      IsChecked="True" Margin="0,0,18,0"/>
+            <CheckBox x:Name="UseSourceConflictCheckBox" Content="角色冲突时使用源文件存档"
+                      Margin="0,0,18,0"/>
+            <CheckBox x:Name="UseTargetConflictCheckBox" Content="角色冲突时使用目标文件存档"
+                      />
+        </StackPanel>
+
+        <Border Grid.Row="2" x:Name="DropArea" AllowDrop="True" Background="White"
+                BorderBrush="#FF888888" BorderThickness="1" CornerRadius="4"
+                DragEnter="DropArea_DragEnter" DragOver="DropArea_DragOver"
+                DragLeave="DropArea_DragLeave" Drop="DropArea_Drop"
+                MouseEnter="DropArea_MouseEnter" MouseLeave="DropArea_MouseLeave"
+                MouseLeftButtonDown="DropArea_MouseLeftButtonDown">
+            <TextBlock x:Name="DropAreaTextBlock"
+                       Text="将源 .db 文件拖入此处，或点击此空白区域选择源文件"
+                       TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Margin="20" Foreground="#FF444444"/>
+        </Border>
+
+        <TextBlock Grid.Row="3" x:Name="StatusTextBlock" Margin="0,10,0,10"
+                   Text="请选择源文件。目标文件为当前服务器的 WS\Saved\Accounts\account.db。"
+                   TextWrapping="Wrap" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+
+        <Button Grid.Row="4" x:Name="TransferButton" Content="服务器/本地存档转集群主服务器"
+                HorizontalAlignment="Stretch" Height="38" Click="TransferButton_Click"/>
+    </Grid>
+</Window>

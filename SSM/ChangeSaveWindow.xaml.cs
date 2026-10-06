@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using ModernWpf.Controls;
 using SoulmaskServerManager;
 
@@ -15,61 +16,91 @@ namespace SoulmaskServerManager
     {
         private Server _server;
         private MainWindow _mainWindow = Application.Current.MainWindow as MainWindow;
+        private bool _isImporting;
 
         public ChangeSaveWindow(Server server)
         {
             InitializeComponent();
             _server = server;
-            this.DragOver += (s, e) => e.Effects = DragDropEffects.Copy;
+            this.DragOver += (s, e) =>
+            {
+                e.Effects = DragDropEffects.Copy;
+                e.Handled = true;
+            };
         }
 
-        private async void DropArea_Drop(object sender, DragEventArgs e)
+        private void DropArea_Drop(object sender, DragEventArgs e)
         {
-            await Task.Yield();
-            try
+            e.Handled = true;
+            e.Effects = DragDropEffects.Copy;
+
+            if (_isImporting || !e.Data.GetDataPresent(DataFormats.FileDrop))
+                return;
+
+            string[] paths = (string[])e.Data.GetData(DataFormats.FileDrop);
+            if (paths == null || paths.Length == 0)
+                return;
+
+            _isImporting = true;
+            DropArea.Background = Brushes.Transparent;
+
+            // Finish the native drag/drop event before showing dialogs or starting async work.
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(async () =>
             {
-                if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
-                string[] paths = (string[])e.Data.GetData(DataFormats.FileDrop);
-                if (paths == null || paths.Length == 0) return;
-
-                string firstPath = paths[0];
-
-                if (File.Exists(firstPath) && Path.GetFileName(firstPath).Equals("world.db", StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    await HandleDropWorldDb(firstPath);
-                    return;
+                    Activate();
+                    await ProcessDroppedPathAsync(paths[0]);
                 }
-
-                if (Directory.Exists(firstPath))
+                catch (Exception ex)
                 {
-                    await HandleDropFolder(firstPath);
-                    return;
+                    _mainWindow?.ShowLogMsg($"导入失败:{ex.Message}", Brushes.Red);
                 }
-
-                if (File.Exists(firstPath) && Path.GetFileName(firstPath).Equals("account.db", StringComparison.OrdinalIgnoreCase))
+                finally
                 {
-                    await HandleDropAccountDb(firstPath);
-                    return;
+                    _isImporting = false;
+                    IsEnabled = true;
+                    ImportSaveFileText.Text = "拖入服务器文件夹或存档文件到这里";
+                    ImportSaveFileText.Foreground = Brushes.LightGray;
+                    DropArea.Background = Brushes.Transparent;
                 }
+            }));
+        }
 
-                await new ContentDialog
-                {
-                    Title = "错误",
-                    Content = "请拖入：\n• 地图存档 world.db\n• 玩家数据 account.db\n• 服务器根目录",
-                    PrimaryButtonText = "确定"
-                }.ShowAsync();
-            }
-            catch (Exception ex)
+        private async Task ProcessDroppedPathAsync(string firstPath)
+        {
+            if (File.Exists(firstPath) && Path.GetFileName(firstPath).Equals("world.db", StringComparison.OrdinalIgnoreCase))
             {
-                IsEnabled = true;
-                _mainWindow.ShowLogMsg($"导入失败:{ex.Message}", Brushes.Red);
+                await HandleDropWorldDb(firstPath);
+                return;
             }
+
+            if (Directory.Exists(firstPath))
+            {
+                await HandleDropFolder(firstPath);
+                return;
+            }
+
+            if (File.Exists(firstPath) && Path.GetFileName(firstPath).Equals("account.db", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleDropAccountDb(firstPath);
+                return;
+            }
+
+            await new ContentDialog
+            {
+                Owner = this,
+                Title = "错误",
+                Content = "请拖入：\n• 地图存档 world.db\n• 玩家数据 account.db\n• 服务器根目录",
+                PrimaryButtonText = "确定"
+            }.ShowAsync();
         }
 
         private async Task HandleDropWorldDb(string dbFilePath)
         {
             var dialog = new ContentDialog
             {
+                Owner = this,
                 Title = "选择存档所属地图",
                 Content = "请选择当前 world.db 要导入到哪个地图目录：",
                 PrimaryButtonText = "云雾之森",
@@ -77,6 +108,8 @@ namespace SoulmaskServerManager
             };
 
             var res = await dialog.ShowAsync();
+            if (res is not ContentDialogResult.Primary and not ContentDialogResult.Secondary)
+                return;
             string mapFolder = res == ContentDialogResult.Primary
                 ? "Level01_Main"
                 : "DLC_Level01_Main";
@@ -92,6 +125,7 @@ namespace SoulmaskServerManager
 
             var confirm = new ContentDialog
             {
+                Owner = this,
                 Title = "确认覆盖",
                 Content = $"确定要将存档导入到：\n{mapFolder}\n并覆盖现有 world.db 吗？",
                 PrimaryButtonText = "确认覆盖",
@@ -102,16 +136,15 @@ namespace SoulmaskServerManager
 
             ImportSaveFileText.Text = "正在导入 world.db...";
             ImportSaveFileText.Foreground = Brushes.Orange;
-            IsEnabled = false;
 
             await Task.Run(() =>
             {
                 File.Copy(dbFilePath, targetDbPath, overwrite: true);
             });
 
-            IsEnabled = true;
             var finalDialog = new ContentDialog
             {
+                Owner = this,
                 Title = "导入成功",
                 Content = $"存档已导入到 {mapFolder}",
                 PrimaryButtonText = "确定",
@@ -130,10 +163,12 @@ namespace SoulmaskServerManager
             {
                 var dialog = new ContentDialog
                 {
+                    Owner = this,
                     Title = "错误",
                     Content = "未找到存档目录：WS/Saved/Worlds/Dedicated",
                     PrimaryButtonText = "确定",
-                }.ShowAsync();
+                };
+                await dialog.ShowAsync();
                 return;
             }
 
@@ -148,10 +183,12 @@ namespace SoulmaskServerManager
             {
                 var dialog = new ContentDialog
                 {
+                    Owner = this,
                     Title = "错误",
                     Content = "未找到任何有效的 world.db 存档",
                     PrimaryButtonText = "确定",
-                }.ShowAsync();
+                };
+                await dialog.ShowAsync();
                 return;
             }
 
@@ -160,12 +197,15 @@ namespace SoulmaskServerManager
             {
                 var chooseDlg = new ContentDialog
                 {
+                    Owner = this,
                     Title = "选择要导入的存档",
                     Content = "检测到两个地图存档，请选择：",
                     PrimaryButtonText = "云雾之森",
                     SecondaryButtonText = "金色浮沙"
                 };
                 var result = await chooseDlg.ShowAsync();
+                if (result is not ContentDialogResult.Primary and not ContentDialogResult.Secondary)
+                    return;
                 selectedMap = result == ContentDialogResult.Primary ? "Level01_Main" : "DLC_Level01_Main";
             }
             else
@@ -175,6 +215,7 @@ namespace SoulmaskServerManager
 
             var confirm = new ContentDialog
             {
+                Owner = this,
                 Title = "确认导入",
                 Content = $"即将导入存档：{(selectedMap == "Level01_Main" ? "云雾之森" : "金色浮沙")}",
                 PrimaryButtonText = "确定导入",
@@ -185,7 +226,6 @@ namespace SoulmaskServerManager
 
             ImportSaveFileText.Text = "正在导入存档...请勿关闭窗口";
             ImportSaveFileText.Foreground = Brushes.Orange;
-            IsEnabled = false;
 
             await Task.Run(() =>
             {
@@ -199,9 +239,9 @@ namespace SoulmaskServerManager
                 File.Copy(srcDb, targetDb, overwrite: true);
             });
 
-            IsEnabled = true; 
             var finalDialog = new ContentDialog
             {
+                Owner = this,
                 Title = "导入成功",
                 Content = $"存档已导入到 {selectedMap}",
                 PrimaryButtonText = "确定",
@@ -215,53 +255,37 @@ namespace SoulmaskServerManager
 
         private async Task HandleDropAccountDb(string accountFilePath)
         {
-            try
+            string targetAccountDir = Path.Combine(_server.Path, "WS", "Saved", "Accounts");
+            string targetAccountPath = Path.Combine(targetAccountDir, "account.db");
+
+            var confirm = new ContentDialog
             {
-                string targetAccountDir = Path.Combine(_server.Path, "WS", "Saved", "Accounts");
-                string targetAccountPath = Path.Combine(targetAccountDir, "account.db");
+                Owner = this,
+                Title = "导入玩家数据",
+                Content = "确定要覆盖玩家数据 account.db 吗？",
+                PrimaryButtonText = "确认覆盖",
+                SecondaryButtonText = "取消"
+            };
+            if (await confirm.ShowAsync() != ContentDialogResult.Primary)
+                return;
 
-                if (!Directory.Exists(targetAccountDir))
-                    Directory.CreateDirectory(targetAccountDir);
+            ImportSaveFileText.Text = "正在导入玩家数据...";
+            ImportSaveFileText.Foreground = Brushes.Orange;
 
-                var confirm = new ContentDialog
-                {
-                    Title = "导入玩家数据",
-                    Content = $"确定要覆盖玩家数据 account.db 吗？",
-                    PrimaryButtonText = "确认覆盖",
-                    SecondaryButtonText = "取消"
-                };
-                if (await confirm.ShowAsync() != ContentDialogResult.Primary)
-                    return;
-
-                ImportSaveFileText.Text = "正在导入玩家数据...";
-                ImportSaveFileText.Foreground = Brushes.Orange;
-                IsEnabled = false;
-
-                await Task.Run(() =>
-                {
-                    if (!Directory.Exists(targetAccountDir))
-                        Directory.CreateDirectory(targetAccountDir);
-
-                    File.Copy(accountFilePath, targetAccountPath, overwrite: true);
-                });
-
-                IsEnabled = true;
-                var finalDialog = new ContentDialog
-                {
-                    Title = "导入成功",
-                    Content = "玩家数据 account.db 已导入完成！",
-                    PrimaryButtonText = "确定"
-                };
-                await finalDialog.ShowAsync();
-
-                ImportSaveFileText.Text = "拖入服务器文件夹或存档文件到这里";
-                ImportSaveFileText.Foreground = Brushes.LightGray;
-                DropArea.Background = Brushes.Transparent;
-            }
-            finally
+            await Task.Run(() =>
             {
-                IsEnabled = true;
-            }
+                Directory.CreateDirectory(targetAccountDir);
+                File.Copy(accountFilePath, targetAccountPath, overwrite: true);
+            });
+
+            var finalDialog = new ContentDialog
+            {
+                Owner = this,
+                Title = "导入成功",
+                Content = "玩家数据 account.db 已导入完成！",
+                PrimaryButtonText = "确定"
+            };
+            await finalDialog.ShowAsync();
         }
 
         private bool CheckHasValidSave(string dedicatedPath, string mapName)
@@ -273,6 +297,8 @@ namespace SoulmaskServerManager
 
         private void DropArea_DragEnter(object sender, DragEventArgs e)
         {
+            e.Effects = DragDropEffects.Copy;
+            e.Handled = true;
             DropArea.Background = new SolidColorBrush(Color.FromRgb(50, 50, 50));
         }
 

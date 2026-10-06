@@ -20,6 +20,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -27,7 +28,7 @@
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
             <Button Click="ImportConfig_Click" Margin="2,0" ToolTip="从文件导入系数配置">
                 <StackPanel Orientation="Horizontal">
-                    <ui:SymbolIcon Symbol="OpenFile" Margin="0,0,3,0"/>
+                    <ui:SymbolIcon Symbol="Download" Margin="0,0,3,0"/>
                     <TextBlock Text="导入"/>
                 </StackPanel>
             </Button>
@@ -39,7 +40,7 @@
             </Button>
             <Button Click="ExportConfig_Click" Margin="2,0" ToolTip="导出当前系数配置">
                 <StackPanel Orientation="Horizontal">
-                    <ui:SymbolIcon Symbol="Download" Margin="0,0,3,0"/>
+                    <ui:SymbolIcon Symbol="OpenFile" Margin="0,0,3,0"/>
                     <TextBlock Text="导出"/>
                 </StackPanel>
             </Button>
@@ -64,7 +65,31 @@
             </Button>
             <TextBlock x:Name="UnappliedChangesText" VerticalAlignment="Center" Margin="15,0,0,0" Foreground="Red" Visibility="Collapsed"/>
         </StackPanel>
-        <TabControl Grid.Row="1" x:Name="CategoryTabControl">
+
+        <DockPanel Grid.Row="1" Margin="10,5,10,5" LastChildFill="False">
+            <TextBlock Text="搜索系数设置项：" VerticalAlignment="Center" Margin="0,0,5,0" DockPanel.Dock="Left"/>
+            <TextBox x:Name="CoefficientSearchBox" ui:ControlHelper.PlaceholderText="输入关键词..."
+                     KeyDown="CoefficientSearchBox_KeyDown"
+                     Width="200" Margin="0,0,10,0" DockPanel.Dock="Left"/>
+            <Button Content="上一个" Click="PrevMatch_Click" Margin="0,0,5,0" DockPanel.Dock="Left"/>
+            <Button Content="下一个" Click="NextMatch_Click" Margin="0,0,10,0" DockPanel.Dock="Left"/>
+            <TextBlock x:Name="SearchResultLabel" Text="0 / 0" VerticalAlignment="Center" DockPanel.Dock="Left"/>
+        </DockPanel>
+
+        <TabControl x:Name="SettingsTabControl" Grid.Row="2" Padding="5"
+                    SelectionChanged="SettingsTabControl_SelectionChanged">
+            <TabControl.Resources>
+                <Style TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
+                    <Setter Property="HeaderTemplate">
+                        <Setter.Value>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" FontSize="15"/>
+                            </DataTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </TabControl.Resources>
+
             <TabItem Header="通用">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="10">

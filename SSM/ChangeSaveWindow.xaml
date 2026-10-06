@@ -23,12 +23,6 @@
                 FontSize="20"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Center"/> 
-                <TextBlock
-                Text="拖入后最好点击一下窗口"
-                Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
-                FontSize="20"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"/>
                 <Separator Margin="5"/>
                 <TextBlock
                 Text="若原存档为集群主服务器"

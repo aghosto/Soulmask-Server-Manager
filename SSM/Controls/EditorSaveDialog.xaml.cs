@@ -8,11 +8,19 @@ namespace SoulmaskServerManager.Controls
     /// </summary>
     public partial class EditorSaveDialog : ContentDialog
     {
-        public EditorSaveDialog(ObservableCollection<Server> servers)
+        public EditorSaveDialog(ObservableCollection<Server> servers, Server? currentServer = null)
         {
             DataContext = servers;
             InitializeComponent();
-            if (servers.Count > 0 )
+
+            if (currentServer != null)
+            {
+                int currentIndex = servers.IndexOf(currentServer);
+                if (currentIndex >= 0)
+                    ServerCombo.SelectedIndex = currentIndex;
+            }
+
+            if (ServerCombo.SelectedIndex < 0 && servers.Count > 0)
                 ServerCombo.SelectedIndex = 0;
         }
 

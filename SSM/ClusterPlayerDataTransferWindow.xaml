@@ -3,11 +3,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.modernwpf.com/2019"
         ui:WindowHelper.UseModernWindowStyle="True"
-        Title="集群玩家数据转移" Height="430" Width="700"
-        MinHeight="350" MinWidth="600" WindowStartupLocation="CenterOwner">
+        Title="集群玩家数据转移" Height="720" Width="1100"
+        MinHeight="560" MinWidth="850" WindowStartupLocation="CenterOwner">
     <Grid Margin="14">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
@@ -15,44 +14,142 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" Margin="0,0,0,12">
-            <DockPanel Margin="0,0,0,6">
-                <Button DockPanel.Dock="Right" Content="选择文件..." Padding="12,5" Click="BrowseSourceButton_Click"/>
-                <TextBlock Text="源文件路径：" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBox x:Name="SourcePathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+            <DockPanel Margin="0,0,0,8">
+                <Button DockPanel.Dock="Right" Content="使用帮助" Padding="10,3" Margin="10,0,0,0"
+                        Click="HelpButton_Click"/>
+                <TextBlock Text="选择源和目标数据库，窗口会列出数据库中的玩家 SteamID。"
+                           TextWrapping="Wrap" VerticalAlignment="Center"/>
             </DockPanel>
-            <DockPanel>
-                <Button DockPanel.Dock="Right" Content="选择路径..." Padding="12,5" Click="BrowseTargetButton_Click"/>
-                <TextBlock Text="目标路径：" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBox x:Name="TargetPathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
-            </DockPanel>
+            <StackPanel x:Name="ConflictOptionsPanel" Orientation="Horizontal">
+                <CheckBox x:Name="UseRecentConflictCheckBox" Content="角色冲突时使用最近的存档"
+                          IsChecked="True" Margin="0,0,18,0"/>
+                <CheckBox x:Name="UseSourceConflictCheckBox" Content="角色冲突时使用源文件存档"
+                          Margin="0,0,18,0"/>
+                <CheckBox x:Name="UseTargetConflictCheckBox" Content="角色冲突时使用目标文件存档"/>
+            </StackPanel>
         </StackPanel>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
-            <CheckBox x:Name="UseRecentConflictCheckBox" Content="角色冲突时使用最近的存档"
-                      IsChecked="True" Margin="0,0,18,0"/>
-            <CheckBox x:Name="UseSourceConflictCheckBox" Content="角色冲突时使用源文件存档"
-                      Margin="0,0,18,0"/>
-            <CheckBox x:Name="UseTargetConflictCheckBox" Content="角色冲突时使用目标文件存档"
-                      />
-        </StackPanel>
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
 
-        <Border Grid.Row="2" x:Name="DropArea" AllowDrop="True" Background="White"
-                BorderBrush="#FF888888" BorderThickness="1" CornerRadius="4"
-                DragEnter="DropArea_DragEnter" DragOver="DropArea_DragOver"
-                DragLeave="DropArea_DragLeave" Drop="DropArea_Drop"
-                MouseEnter="DropArea_MouseEnter" MouseLeave="DropArea_MouseLeave"
-                MouseLeftButtonDown="DropArea_MouseLeftButtonDown">
-            <TextBlock x:Name="DropAreaTextBlock"
-                       Text="将源 .db 文件拖入此处，或点击此空白区域选择源文件"
-                       TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center"
-                       Margin="20" Foreground="#FF444444"/>
-        </Border>
+            <Border x:Name="SourceDatabasePanel" Grid.Column="0" AllowDrop="True"
+                    DragEnter="SourceDrop_DragEnter" DragOver="DatabaseDrop_DragOver"
+                    DragLeave="DatabaseDrop_DragLeave" Drop="SourceDrop_Drop"
+                    BorderBrush="#FF888888" BorderThickness="1" CornerRadius="4" Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="源数据库（可拖入 .db 文件）" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <DockPanel Grid.Row="1" Margin="0,0,0,8">
+                        <Button DockPanel.Dock="Right" Content="选择文件..." Padding="10,4" Click="BrowseSourceButton_Click"/>
+                        <TextBox x:Name="SourcePathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+                    </DockPanel>
+                    <Border x:Name="SourcePlayerListPanel" Grid.Row="2" Background="White" BorderBrush="#FFBBBBBB" BorderThickness="1"
+                            CornerRadius="3">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top" Margin="8">
+                                <Button DockPanel.Dock="Right" Content="全选" Padding="8,2" Click="SelectAllSourceButton_Click"/>
+                                <TextBlock x:Name="SourceCountTextBlock" Text="玩家数：0" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <DataGrid x:Name="SourceSteamIdListBox" SelectionMode="Extended" SelectionUnit="FullRow"
+                                      AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                                      CanUserDeleteRows="False" CanUserSortColumns="False"
+                                      SelectionChanged="SteamIdSelection_Changed"
+                                      PreviewMouseRightButtonDown="SteamIdList_PreviewMouseRightButtonDown">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SteamID" Binding="{Binding SteamId}" Width="*"/>
+                                    <DataGridTextColumn Header="最后更新时间" Binding="{Binding LastUpdated}" Width="160"/>
+                                </DataGrid.Columns>
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="删除此玩家数据..." Click="RemoveSteamId_Click"/>
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
+                            </DataGrid>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </Border>
 
-        <TextBlock Grid.Row="3" x:Name="StatusTextBlock" Margin="0,10,0,10"
-                   Text="请选择源文件和目标文件路径。"
+            <Border x:Name="TargetDatabasePanel" Grid.Column="2" AllowDrop="True"
+                    DragEnter="TargetDrop_DragEnter" DragOver="DatabaseDrop_DragOver"
+                    DragLeave="DatabaseDrop_DragLeave" Drop="TargetDrop_Drop"
+                    BorderBrush="#FF888888" BorderThickness="1" CornerRadius="4" Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="目标数据库（可拖入 .db 文件）" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <DockPanel Grid.Row="1" Margin="0,0,0,8">
+                        <Button DockPanel.Dock="Right" Content="选择文件..." Padding="10,4" Click="BrowseTargetButton_Click"/>
+                        <TextBox x:Name="TargetPathTextBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+                    </DockPanel>
+                    <Border Grid.Row="2" Background="White" BorderBrush="#FFBBBBBB" BorderThickness="1"
+                            CornerRadius="3">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top" Margin="8">
+                                <Button DockPanel.Dock="Right" Content="全选" Padding="8,2" Click="SelectAllTargetButton_Click"/>
+                                <TextBlock x:Name="TargetCountTextBlock" Text="玩家数：0" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <DataGrid x:Name="TargetSteamIdListBox" SelectionMode="Extended" SelectionUnit="FullRow"
+                                      AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                                      CanUserDeleteRows="False" CanUserSortColumns="False"
+                                      SelectionChanged="SteamIdSelection_Changed"
+                                      PreviewMouseRightButtonDown="SteamIdList_PreviewMouseRightButtonDown">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SteamID" Binding="{Binding SteamId}" Width="*"/>
+                                    <DataGridTextColumn Header="最后更新时间" Binding="{Binding LastUpdated}" Width="160"/>
+                                </DataGrid.Columns>
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="删除此玩家数据..." Click="RemoveSteamId_Click"/>
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
+                            </DataGrid>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <TextBlock Grid.Row="2" x:Name="StatusTextBlock" Margin="0,0,0,10"
+                   Text="请选择源数据库；目标默认为当前服务器的 WS\Saved\Accounts\account.db。"
                    TextWrapping="Wrap" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
 
-        <Button Grid.Row="4" x:Name="TransferButton" Content="服务器/本地存档转集群主服务器"
-                HorizontalAlignment="Stretch" Height="38" Click="TransferButton_Click"/>
+        <DockPanel Grid.Row="3">
+            <Button x:Name="TransferButton" Content="转移玩家数据"
+                    Height="38" Padding="18,0" Click="TransferButton_Click"/>
+        </DockPanel>
+
+        <Grid x:Name="HelpOverlay" Grid.RowSpan="4" Panel.ZIndex="10" Visibility="Collapsed"
+              SizeChanged="HelpOverlay_SizeChanged">
+            <Path x:Name="HelpMask" Fill="#B3000000" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top"
+                  MouseLeftButtonDown="HelpMask_MouseLeftButtonDown"/>
+            <Path x:Name="HelpHighlightPath" Stroke="#FFFFC107" StrokeThickness="4"
+                  Fill="Transparent" IsHitTestVisible="False" Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+            <Border x:Name="HelpCard" Width="390" Padding="20" Background="White"
+                    BorderBrush="#FFFFC107" BorderThickness="2" CornerRadius="8"
+                    HorizontalAlignment="Right" VerticalAlignment="Center" Margin="12">
+                <StackPanel>
+                    <TextBlock x:Name="HelpStepTitleTextBlock" FontSize="21" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                    <TextBlock x:Name="HelpStepDescriptionTextBlock" TextWrapping="Wrap" Margin="0,0,0,14"/>
+                    <DockPanel>
+                        <Button x:Name="GuideContinueButton" DockPanel.Dock="Right" MinWidth="130" Padding="10,4"
+                                Visibility="Collapsed" Click="GuideContinueButton_Click"/>
+                        <Button Content="退出引导" MinWidth="100" Padding="10,4"
+                                Click="CloseHelpOverlayButton_Click"/>
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

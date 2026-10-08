@@ -7,6 +7,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Globalization;
 #if DEBUG
 using System.Text;
 #endif
@@ -23,23 +24,32 @@ namespace SoulmaskServerManager
     {
         private static readonly Regex SteamIdPattern = new(@"^\d{17}$", RegexOptions.Compiled);
         private readonly Server _server;
+        private readonly MainSettings _mainSettings;
         private readonly HashSet<string> _allSourceSteamIds = new(StringComparer.Ordinal);
         private readonly ObservableCollection<PlayerDatabaseEntry> _sourcePlayers = new();
         private readonly ObservableCollection<PlayerDatabaseEntry> _targetPlayers = new();
         private bool _updatingConflictOptions;
         private bool _isTransferring;
         private bool _isLoadingDatabase;
-        private bool _hasShownHelpCompletionReminder;
+        private bool _needsPersistDefaultTargetPath;
         private int _guidedHelpStep;
 
-        public ClusterPlayerDataTransferWindow(Server server)
+        public ClusterPlayerDataTransferWindow(Server server, MainSettings mainSettings)
         {
             InitializeComponent();
             _server = server;
+            _mainSettings = mainSettings;
             SourceSteamIdListBox.ItemsSource = _sourcePlayers;
             TargetSteamIdListBox.ItemsSource = _targetPlayers;
-            TargetPathTextBox.Text = GetDefaultTargetPath();
-            StatusTextBlock.Text = "请选择源数据库；目标默认为当前服务器的 WS\\Saved\\Accounts\\account.db。";
+            string savedTargetPath = _server.PlayerDataTargetPath;
+            if (string.IsNullOrWhiteSpace(savedTargetPath))
+            {
+                savedTargetPath = ResolveDefaultTargetPath();
+                _server.PlayerDataTargetPath = savedTargetPath;
+                _needsPersistDefaultTargetPath = true;
+            }
+            TargetPathTextBox.Text = savedTargetPath;
+            StatusTextBlock.Text = "请选择源数据库；目标路径按当前服务器保存的默认路径读取。";
             Loaded += Window_Loaded;
 
             UseRecentConflictCheckBox.Checked += ConflictOption_Checked;
@@ -53,6 +63,12 @@ namespace SoulmaskServerManager
 
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            if (_needsPersistDefaultTargetPath)
+            {
+                _needsPersistDefaultTargetPath = false;
+                await MainSettings.SaveAsync(_mainSettings);
+            }
+
             string defaultTarget = TargetPathTextBox.Text;
             if (File.Exists(defaultTarget))
                 await LoadDatabaseAsync(defaultTarget, isSource: false);
@@ -94,7 +110,25 @@ namespace SoulmaskServerManager
                 await LoadDatabaseAsync(dialog.FileName, isSource: false);
         }
 
-        private string GetDefaultTargetPath() => Path.Combine(_server.Path, "WS", "Saved", "Accounts", "account.db");
+        private string ResolveDefaultTargetPath()
+        {
+            string savedPath = Path.Combine(_server.Path, "WS", "Saved");
+            string accountPath = Path.Combine(savedPath, "Account", "account.db");
+            if (File.Exists(accountPath))
+                return accountPath;
+
+            // Existing servers commonly use the plural Accounts directory.
+            string accountsPath = Path.Combine(savedPath, "Accounts", "account.db");
+            if (File.Exists(accountsPath))
+                return accountsPath;
+
+            string dedicatedPath = Path.Combine(savedPath, "Worlds", "Dedicated");
+            string dlcMapPath = Path.Combine(dedicatedPath, "DLC_Level01_Main");
+            string mapPath = Directory.Exists(dlcMapPath)
+                ? dlcMapPath
+                : Path.Combine(dedicatedPath, "Level01_Main");
+            return Path.Combine(mapPath, "world.db");
+        }
 
         private void HelpButton_Click(object sender, RoutedEventArgs e)
         {
@@ -263,7 +297,14 @@ namespace SoulmaskServerManager
                 _allSourceSteamIds.Clear();
             }
             else
+            {
                 TargetPathTextBox.Text = fullPath;
+                if (!string.Equals(_server.PlayerDataTargetPath, fullPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    _server.PlayerDataTargetPath = fullPath;
+                    await MainSettings.SaveAsync(_mainSettings);
+                }
+            }
 
             players.Clear();
             countText.Text = "正在读取玩家列表……";
@@ -287,9 +328,9 @@ namespace SoulmaskServerManager
 
                 countText.Text = $"玩家数：{playersFromDatabase.Count}";
                 StatusTextBlock.Text = playersFromDatabase.Count > 0
-                    ? $"已读取 {playersFromDatabase.Count} 个 SteamID：{fullPath}"
+                    ? $"已读取 {playersFromDatabase.Count} 个 玩家ID：{fullPath}"
                     : File.Exists(fullPath)
-                        ? $"数据库已读取，但未找到符合 17 位数字格式的 actor_name：{fullPath}"
+                        ? $"数据库已读取：{fullPath}"
                         : $"目标数据库尚不存在；转移时将由 CopyRoles.exe 创建：{fullPath}";
 
                 if (HelpOverlay.Visibility == Visibility.Visible)
@@ -525,7 +566,8 @@ namespace SoulmaskServerManager
 
         private async void TransferButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_guidedHelpStep == 5)
+            bool completedGuidedHelp = _guidedHelpStep == 5;
+            if (completedGuidedHelp)
                 CloseHelpOverlayButton_Click(sender, e);
 
             var selectedSteamIds = SourceSteamIdListBox.SelectedItems.Cast<PlayerDatabaseEntry>().Select(player => player.SteamId)
@@ -548,10 +590,12 @@ namespace SoulmaskServerManager
 
             bool allSourcePlayersSelected = _allSourceSteamIds.Count > 0
                 && selectedSteamIds.SetEquals(_allSourceSteamIds);
-            await ExecuteTransferAsync(allSourcePlayersSelected ? null : selectedSteamIds.OrderBy(id => id, StringComparer.Ordinal).ToArray());
+            await ExecuteTransferAsync(
+                allSourcePlayersSelected ? null : selectedSteamIds.OrderBy(id => id, StringComparer.Ordinal).ToArray(),
+                completedGuidedHelp);
         }
 
-        private async Task ExecuteTransferAsync(IReadOnlyCollection<string>? userIds)
+        private async Task ExecuteTransferAsync(IReadOnlyCollection<string>? userIds, bool completedGuidedHelp)
         {
             if (_isTransferring || _isLoadingDatabase)
                 return;
@@ -696,11 +740,8 @@ namespace SoulmaskServerManager
                 resultMessage += $"\n\n完整 standardOutput 已导出到：\n{logPath}";
 #endif
                 await ShowNoticeAsync(resultTitle, resultMessage);
-                if (!_hasShownHelpCompletionReminder)
-                {
-                    _hasShownHelpCompletionReminder = true;
+                if (completedGuidedHelp)
                     await ShowNoticeAsync("使用提示", "下次忘记操作步骤时，可以点击窗口顶部的“使用帮助”按钮，查看分步说明。");
-                }
             }
             catch (CopyRolesException ex)
             {
@@ -859,6 +900,20 @@ namespace SoulmaskServerManager
             public string Details { get; }
         }
 
-        private sealed record PlayerDatabaseEntry(string SteamId, string LastUpdated);
+        private sealed record PlayerDatabaseEntry(string SteamId, string LastUpdatedUtc)
+        {
+            public string LastUpdated
+            {
+                get
+                {
+                    if (string.IsNullOrWhiteSpace(LastUpdatedUtc)
+                        || !DateTimeOffset.TryParse(LastUpdatedUtc, CultureInfo.InvariantCulture,
+                            DateTimeStyles.AssumeUniversal, out DateTimeOffset utcTime))
+                        return LastUpdatedUtc;
+
+                    return utcTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture);
+                }
+            }
+        }
     }
 }

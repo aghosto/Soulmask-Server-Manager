@@ -230,6 +230,37 @@ namespace SoulmaskServerManager
             }
         }
 
+        public static async Task<ServerSettings> LoadServerSettingsAsync(string filePath)
+        {
+            if (File.Exists(filePath))
+            {
+                try
+                {
+                    string settingsJson = await File.ReadAllTextAsync(filePath);
+                    return System.Text.Json.JsonSerializer.Deserialize<ServerSettings>(settingsJson)
+                        ?? throw new System.Text.Json.JsonException("配置文件内容为空或格式无效。");
+                }
+                catch
+                {
+                    var errorDialog = new ContentDialog
+                    {
+                        Content = "服务器配置文件损坏，已使用默认配置。",
+                        PrimaryButtonText = "确定",
+                    };
+                    await errorDialog.ShowAsync();
+                    return new ServerSettings();
+                }
+            }
+
+            var noDialog = new ContentDialog
+            {
+                Content = "未找到服务器配置文件，已使用默认配置。",
+                PrimaryButtonText = "确定",
+            };
+            await noDialog.ShowAsync();
+            return new ServerSettings();
+        }
+
         public static void SaveServerSettings(Server server, ServerSettings settings)
         {
             string settingPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
@@ -255,6 +286,30 @@ namespace SoulmaskServerManager
                     PrimaryButtonText = "确定",
                 };
                 failDialog.ShowAsync();
+            }
+        }
+
+        public static async Task SaveServerSettingsAsync(Server server, ServerSettings settings)
+        {
+            string settingPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
+
+            try
+            {
+                string? directory = Path.GetDirectoryName(settingPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                string settingsJson = System.Text.Json.JsonSerializer.Serialize(settings, serializerOptions);
+                await File.WriteAllTextAsync(settingPath, settingsJson);
+            }
+            catch
+            {
+                var failDialog = new ContentDialog
+                {
+                    Content = "配置保存失败！",
+                    PrimaryButtonText = "确定",
+                };
+                await failDialog.ShowAsync();
             }
         }
 

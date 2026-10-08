@@ -34,10 +34,12 @@ using static SoulmaskServerManager.Log;
 namespace SoulmaskServerManager;
 
 /// <summary>
-/// Interaction logic for MainWindow.xaml
+/// 主窗口，负责服务器管理、日志显示以及应用级操作。
 /// </summary>
 public partial class MainWindow : Window
 {
+    #region FieldsAndInitialization
+
     public MainSettings SsmSettings = new();
     private static dWebhook DiscordSender = new();
     private static HttpClient HttpClient = new();
@@ -51,12 +53,18 @@ public partial class MainWindow : Window
 
     private string _activeLogType;
     private const int MAX_LOG_LINES = 500;
-    private DispatcherTimer _logUpdateTimer;
+    private DispatcherTimer? _logUpdateTimer;
     private Dictionary<string, LogType> _logTagToType;
     private Dictionary<LogType, RichTextBox> _logTypeToTexbox;
     private Dictionary<LogType, CheckBox> _logTypeToCheckbox;
-    private Dictionary<LogType, FileSystemWatcher> _logWatchers = new Dictionary<LogType, FileSystemWatcher>();
-    private Dictionary<LogType, long> _lastFileSizes = new Dictionary<LogType, long>();
+    private readonly Dictionary<string, LogFileReadState> _logFileStates = new(StringComparer.OrdinalIgnoreCase);
+    private FileSystemWatcher? _activeLogWatcher;
+    private string? _watchedLogPath;
+    private string? _displayedLogPath;
+    private bool _isLoadingLog;
+    private bool _pendingLogRefresh;
+    private bool _pendingForceLogReload;
+    private long _logRequestVersion;
 
     // 当前选中的服务器
     private Server _currentServer;
@@ -66,6 +74,9 @@ public partial class MainWindow : Window
     private ObservableCollection<PlayerInfo> _players = new();
     private ObservableCollection<PlayerInfo> _bannedPlayers = new();
 
+    /// <summary>
+    /// 创建主窗口并初始化应用设置、界面事件和后台任务。
+    /// </summary>
     public MainWindow()
     {
         // 启用 TLS 1.2 以确保 HTTPS 连接稳定
@@ -109,16 +120,6 @@ public partial class MainWindow : Window
         Closing += MainWindow_Closing;
         Loaded += MainWindow_Loaded;
 
-        if (SsmSettings.Servers.Count != 0)
-        {
-            _logUpdateTimer = new DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(1)
-            };
-            _logUpdateTimer.Tick += LogUpdateTimer_Tick;
-            _logUpdateTimer.Start();
-        }
-
         _logTypeToTexbox = new Dictionary<LogType, RichTextBox>
         {
             { LogType.WSServer, SoulmaskLogTextBox },
@@ -150,18 +151,24 @@ public partial class MainWindow : Window
                 return;
             if (ServerTabControl.SelectedItem is Server selectedServer)
             {
+                StopActiveLogMonitoring();
+                _logRequestVersion++;
                 _currentServer = selectedServer;
                 _ssmPathManager = new (Directory.GetCurrentDirectory(), _currentServer);
                 if (!string.IsNullOrEmpty(_activeLogType))
                 {
                     if (_activeLogType == "PlayerData")
                     {
+                        StopActiveLogMonitoring();
                         LoadBannedPlayersFromFile();
                         await RefreshPlayersAsync();
                         return;
                     }
                     else
-                        LoadLogByType(_logTagToType[_activeLogType], true);
+                    {
+                        ConfigureActiveLogMonitoring();
+                        await LoadLogByTypeAsync(_logTagToType[_activeLogType], forceReload: true);
+                    }
                 }
                 if (_currentServer.Runtime.State == ServerRuntime.ServerState.更新中)
                 {
@@ -205,12 +212,27 @@ public partial class MainWindow : Window
             LookForAppUpdate();
     }
 
+    #endregion FieldsAndInitialization
+
+    #region WindowLifecycle
+
+    /// <summary>
+    /// 初始化主窗口、恢复运行中的服务器并启动日志监控。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         UpdateWallpaper();
         await RestoreRunningServers();
+        RefreshActiveLogMonitoringForStateChange();
     }
 
+    /// <summary>
+    /// 根据应用关闭设置隐藏主窗口或结束托盘状态。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
         MainSettings mainSettings = MainSettings.LoadManagerSettings();
@@ -229,8 +251,27 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 根据主窗口当前状态显示或隐藏窗口。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
+    private void TrayIcon_Click(object sender, RoutedEventArgs e)
+    {
+        if (Visibility == Visibility.Visible)
+            Hide();
+        else
+        {
+            Show();
+            Activate();
+        }
+    }
+
     #region MinimizeAndClose
 
+    /// <summary>
+    /// 隐藏主窗口并将程序保留在系统托盘中。
+    /// </summary>
     private void MinimizeToTray()
     {
         Hide();
@@ -238,6 +279,11 @@ public partial class MainWindow : Window
         TrayIcon.ShowBalloonTip("已最小化", "程序在托盘运行中", BalloonIcon.Info);
     }
 
+    /// <summary>
+    /// 从系统托盘恢复并激活主窗口。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void TrayIcon_ShowWindow(object sender, RoutedEventArgs e)
     {
         Show();
@@ -246,6 +292,11 @@ public partial class MainWindow : Window
         Activate();
     }
 
+    /// <summary>
+    /// 退出系统托盘图标并关闭应用程序。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void TrayIcon_Exit(object sender, RoutedEventArgs e)
     {
         TrayIcon.Visibility = Visibility.Collapsed;
@@ -255,8 +306,16 @@ public partial class MainWindow : Window
         Close();
     }
 
+    /// <summary>
+    /// 释放日志监控、玩家刷新计时器和托盘资源。
+    /// </summary>
+    /// <param name="e">事件参数。</param>
     protected override void OnClosed(EventArgs e)
     {
+        StopActiveLogMonitoring();
+        if (_playerRefreshTimer != null)
+            _playerRefreshTimer.Stop();
+
         base.OnClosed(e);
 
         if (TrayIcon != null)
@@ -270,6 +329,15 @@ public partial class MainWindow : Window
 
     #endregion MinimizeAndClose
 
+    #endregion WindowLifecycle
+
+    #region LogTabNavigation
+
+    /// <summary>
+    /// 启用自动滚动时将当前日志视图滚动到末尾。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void AutoScrollCheckBox_CheckedChanged(object sender, RoutedEventArgs e)
     {
         if (sender is CheckBox checkBox && !string.IsNullOrEmpty(_activeLogType))
@@ -292,7 +360,11 @@ public partial class MainWindow : Window
         }
     }
 
-    // 日志标签页切换事件
+    /// <summary>
+    /// 切换日志页时刷新服务器日志或玩家数据并更新监控。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void LogTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (e.OriginalSource is not TabControl)
@@ -303,10 +375,8 @@ public partial class MainWindow : Window
 
         if (LogTabControl.SelectedItem is TabItem selectedTab && selectedTab.Tag is string logType)
         {
-            foreach (var watcher in _logWatchers.Values)
-            {
-                watcher.EnableRaisingEvents = false;
-            }
+            _logRequestVersion++;
+            StopActiveLogMonitoring();
             _activeLogType = logType;
             if (_activeLogType == "PlayerData")
             {
@@ -315,46 +385,50 @@ public partial class MainWindow : Window
                 await RefreshPlayersAsync();
                 return;
             }
-            else
-                LoadLogByType(_logTagToType[_activeLogType], forceRefresh: true);
 
-            if (_currentServer.Runtime.State == ServerRuntime.ServerState.运行中)
-                StartActiveLogWatcher();
+            if (_logTagToType.TryGetValue(_activeLogType, out LogType selectedLogType))
+            {
+                ConfigureActiveLogMonitoring();
+                await LoadLogByTypeAsync(selectedLogType, forceReload: true);
+            }
         }
     }
 
-    #region Timers
+    #endregion LogTabNavigation
 
+    #region TimersAndScheduledTasks
+
+    #region LogRefreshFallbackTimer
+
+    /// <summary>
+    /// 定期检查当前日志文件状态，作为文件监听的兜底。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void LogUpdateTimer_Tick(object? sender, EventArgs e)
     {
         try
         {
-            if (!_logTagToType.TryGetValue(_activeLogType, out LogType logType))
+            if (_currentServer == null || _activeLogType != "WSServer"
+                || _currentServer.Runtime?.State != ServerRuntime.ServerState.运行中)
                 return;
 
-            if (logType == LogType.MainConsole)
-                return;
-
-            if (!File.Exists(_ssmPathManager.LogsPath))
-                return;
-
-            //if (_currentServer == null || _currentServer.Runtime?.State != ServerRuntime.ServerState.运行中)
-            //    return;
-
-            //string relativePath = Path.Combine(_currentServer.Path, _logPath);
-
-            if (File.Exists(_ssmPathManager.LogsPath))
+            string fullPath = Path.GetFullPath(_ssmPathManager.LogsPath);
+            if (!File.Exists(fullPath))
             {
-                long currentSize = new FileInfo(_ssmPathManager.LogsPath).Length;
-                bool sizeChanged = !_lastFileSizes.TryGetValue(logType, out long lastSize) || currentSize != lastSize;
-                bool forceUpdate = DateTime.Now.Second % 10 == 0;
-
-                if (sizeChanged || forceUpdate)
-                {
-                    _lastFileSizes[logType] = currentSize;
-                    OnLogFileChanged(logType);
-                }
+                if (_logFileStates.ContainsKey(fullPath))
+                    RequestLogRefresh(forceReload: true);
+                if (_activeLogWatcher == null)
+                    ConfigureActiveLogMonitoring();
+                return;
             }
+
+            var info = new FileInfo(fullPath);
+            bool changed = !_logFileStates.TryGetValue(fullPath, out LogFileReadState? state)
+                || info.Length != state.FileLength
+                || info.LastWriteTimeUtc != state.LastWriteTimeUtc;
+            if (changed)
+                RequestLogRefresh(forceReload: false);
         }
         catch (Exception ex)
         {
@@ -362,6 +436,13 @@ public partial class MainWindow : Window
         }
     }
 
+    #endregion LogRefreshFallbackTimer
+
+    #region ApplicationAndServerTimers
+
+    /// <summary>
+    /// 初始化玩家数据页的定时刷新。
+    /// </summary>
     public void InitPlayerRefreshTimer()
     {
         if (_playerRefreshTimer != null)
@@ -383,6 +464,9 @@ public partial class MainWindow : Window
         _playerRefreshTimer.Start();
     }
 
+    /// <summary>
+    /// 按应用设置初始化服务器自动更新计时器。
+    /// </summary>
     public void SetupServerAutoUpdateTimer()
     {
         if (SsmSettings.AppSettings.AutoUpdate == true)
@@ -392,6 +476,9 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 初始化服务器自动重启计时器。
+    /// </summary>
     public void InitAutoRestartTimer()
     {
         if (_autoRestartTimer != null)
@@ -424,6 +511,11 @@ public partial class MainWindow : Window
         ShowLogMsg($"全局自动重启已启用 → 每天 {h:D2}:{m:D2}:{s:D2}", Brushes.LimeGreen);
     }
 
+    /// <summary>
+    /// 检查重启计划并重启符合条件的服务器。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void AutoRestartTimer_Tick(object sender, EventArgs e)
     {
         try
@@ -483,6 +575,12 @@ public partial class MainWindow : Window
         catch { }
     }
 
+    /// <summary>
+    /// 启动服务器存档备份清理计时器。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
+    /// <param name="deleteInterval">备份清理计时器间隔（分钟）。</param>
+    /// <param name="backupAmount">要保留的备份数量。</param>
     public static void StartBackupCleanTimer(Server server, int deleteInterval, int backupAmount)
     {
         try
@@ -514,6 +612,10 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 停止并释放服务器存档备份清理计时器。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
     private void StopBackupCleanTimer(Server server)
     {
         if (server.Runtime.BackupCleanTimer != null)
@@ -524,175 +626,441 @@ public partial class MainWindow : Window
         }
     }
 
-    #endregion Timer
+    #endregion ApplicationAndServerTimers
 
-    private bool _isLoadingLog = false;
-    // 根据窗口类型加载日志文件
-    private async void LoadLogByType(LogType logType, bool forceRefresh = false)
+    #endregion TimersAndScheduledTasks
+
+    #region ServerLogLoading
+
+    /// <summary>
+    /// 异步读取当前服务器日志并更新日志视图。
+    /// </summary>
+    /// <param name="logType">日志视图类型。</param>
+    /// <param name="forceReload">是否强制重新读取完整日志快照。</param>
+    /// <returns>表示异步操作。</returns>
+    private async Task LoadLogByTypeAsync(LogType logType, bool forceReload = false)
     {
-        if (_isLoadingLog) return;
-        if (_currentServer == null) return;
-
         if (logType == LogType.MainConsole)
         {
-            RichTextBox mainLogTextBox = _logTypeToTexbox[logType];
             if (_logTypeToCheckbox[logType].IsChecked == true)
-            {
-                mainLogTextBox.ScrollToEnd();
-            }
+                _logTypeToTexbox[logType].ScrollToEnd();
             return;
         }
-        else if (logType == LogType.WSServer)
+
+        if (logType != LogType.WSServer || _currentServer == null || _activeLogType != "WSServer")
+            return;
+
+        _logRequestVersion++;
+        if (_isLoadingLog)
         {
-            try
-            {
-                _isLoadingLog = true;
-                RichTextBox logBox = _logTypeToTexbox[logType];
-                string fullPath = _ssmPathManager.LogsPath;
-
-                bool needLoad = await Task.Run(() =>
-                {
-                    if (forceRefresh) return true;
-                    if (!_lastFileSizes.TryGetValue(logType, out long lastSize)) return true;
-
-                    try
-                    {
-                        return new FileInfo(fullPath).Length != lastSize;
-                    }
-                    catch
-                    {
-                        return false;
-                    }
-                });
-
-                if (!needLoad)
-                {
-                    if (_logTypeToCheckbox[logType].IsChecked == true)
-                    {
-                        logBox.ScrollToEnd();
-                    }
-                    _isLoadingLog = false;
-                    return;
-                }
-
-                string[] lines = await Task.Run(() =>
-                {
-                    if (!File.Exists(fullPath))
-                    {
-                        return new[] {$"日志文件不存在：{fullPath} 请确保服务器有正常启动过至少一次"};
-                    }
-                    return ReadLastNLines(fullPath, MAX_LOG_LINES);
-                });
-
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    try
-                    {
-                        logBox.Document.Blocks.Clear();
-
-                        foreach (string line in lines)
-                        {
-                            AppendLogLine(logType, line);
-                        }
-
-                        _lastFileSizes[logType] = new FileInfo(fullPath).Length;
-
-                        ShowLogMsg($"已加载最近 {lines.Length} 行日志", Brushes.Gray, logType);
-
-                        if (_logTypeToCheckbox[logType].IsChecked == true)
-                        {
-                            logBox.ScrollToEnd();
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        ShowLogMsg($"加载失败：{ex.Message}", Brushes.Red, logType);
-                    }
-                }, System.Windows.Threading.DispatcherPriority.Background);
-            }
-            catch (Exception ex)
-            {
-                ShowLogMsg($"加载失败：{ex.Message}", Brushes.Red, logType);
-            }
-            finally
-            {
-                _isLoadingLog = false;
-            }
+            _pendingLogRefresh = true;
+            _pendingForceLogReload |= forceReload;
+            return;
         }
-    }
 
-    // 读取文件的最后N行
-    private string[] ReadLastNLines(string filePath, int lineCount)
-    {
-        List<string> lines = new List<string>();
-
+        _isLoadingLog = true;
+        bool reload = forceReload;
         try
         {
-            using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            using (var reader = new StreamReader(stream, Encoding.UTF8))
+            do
             {
-                // 强制刷新流，确保读取最新内容
-                stream.Position = 0;
-                reader.DiscardBufferedData();
+                _pendingLogRefresh = false;
+                _pendingForceLogReload = false;
+                Server server = _currentServer;
+                string fullPath = Path.GetFullPath(_ssmPathManager.LogsPath);
+                long requestVersion = _logRequestVersion;
+                bool pathChanged = !string.Equals(_displayedLogPath, fullPath, StringComparison.OrdinalIgnoreCase);
 
-                string[] buffer = new string[lineCount];
-                int bufferIndex = 0;
-                int totalLines = 0;
-
-                while (!reader.EndOfStream)
+                if (pathChanged)
                 {
-                    string line = reader.ReadLine();
-                    if (line != null)
+                    _displayedLogPath = fullPath;
+                    _logTypeToTexbox[LogType.WSServer].Document.Blocks.Clear();
+                    SetServerLogStatus("正在读取服务器日志…");
+                    reload = true;
+                }
+
+                _logFileStates.TryGetValue(fullPath, out LogFileReadState? previousState);
+                LogReadResult result = await Task.Run(() => ReadLogFile(fullPath, previousState, reload));
+
+                bool isStillCurrent = requestVersion == _logRequestVersion
+                    && ReferenceEquals(server, _currentServer)
+                    && _activeLogType == "WSServer"
+                    && string.Equals(fullPath, Path.GetFullPath(_ssmPathManager.LogsPath), StringComparison.OrdinalIgnoreCase);
+
+                if (isStillCurrent)
+                {
+                    if (result.Error != null)
                     {
-                        buffer[bufferIndex] = line;
-                        bufferIndex = (bufferIndex + 1) % lineCount;
-                        totalLines++;
+                        _logTypeToTexbox[LogType.WSServer].Document.Blocks.Clear();
+                        SetServerLogStatus(result.Error);
+                        if (result.State == null)
+                            _logFileStates.Remove(fullPath);
+                    }
+                    else if (result.State != null)
+                    {
+                        _logFileStates[fullPath] = result.State;
+                        if (result.Reloaded || pathChanged)
+                        {
+                            RichTextBox logBox = _logTypeToTexbox[LogType.WSServer];
+                            logBox.Document.Blocks.Clear();
+                            foreach (string line in result.State.Lines)
+                                AppendLogLine(LogType.WSServer, line);
+                        }
+                        else
+                        {
+                            foreach (string line in result.NewLines)
+                                AppendLogLine(LogType.WSServer, line);
+                            TrimDisplayedLogLines(_logTypeToTexbox[LogType.WSServer]);
+                        }
+
+                        SetServerLogStatus(null);
+                        if (_logTypeToCheckbox[LogType.WSServer].IsChecked == true)
+                            _logTypeToTexbox[LogType.WSServer].ScrollToEnd();
                     }
                 }
 
-                int startIndex = totalLines > lineCount ? bufferIndex : 0;
-                int count = Math.Min(lineCount, totalLines);
-
-                for (int i = 0; i < count; i++)
-                {
-                    string line = buffer[(startIndex + i) % lineCount];
-                    if (!string.IsNullOrEmpty(line))
-                    {
-                        lines.Add(line);
-                    }
-                }
+                reload = _pendingForceLogReload;
             }
+            while (_pendingLogRefresh && _activeLogType == "WSServer" && _currentServer != null);
         }
         catch (Exception ex)
         {
-            lines.Clear();
-            lines.Add($"[警告] 读取日志失败：{ex.Message}");
+            if (_activeLogType == "WSServer")
+                SetServerLogStatus($"读取服务器日志失败：{ex.Message}");
         }
-
-        return lines.ToArray();
+        finally
+        {
+            _isLoadingLog = false;
+        }
     }
 
-    private void OnLogFileChanged(LogType logType)
+    /// <summary>
+    /// 请求刷新服务器日志，并合并读取期间产生的重复请求。
+    /// </summary>
+    /// <param name="forceReload">是否强制重新读取完整日志快照。</param>
+    private void RequestLogRefresh(bool forceReload)
     {
-        if (_currentServer?.Runtime?.State != ServerRuntime.ServerState.运行中)
+        if (_activeLogType != "WSServer" || _currentServer == null)
             return;
+        _ = LoadLogByTypeAsync(LogType.WSServer, forceReload);
+    }
 
-        if (!File.Exists(_ssmPathManager.LogsPath)) return;
+    /// <summary>
+    /// 读取日志快照或上次读取位置之后新增的完整行。
+    /// </summary>
+    /// <param name="filePath">要读取或检查的文件路径。</param>
+    /// <param name="previousState">上次读取该文件时保存的状态。</param>
+    /// <param name="forceReload">是否强制重新读取完整日志快照。</param>
+    /// <returns>包含日志状态、新行或错误信息的读取结果。</returns>
+    private LogReadResult ReadLogFile(string filePath, LogFileReadState? previousState, bool forceReload)
+    {
+        if (!File.Exists(filePath))
+            return new LogReadResult(null, Array.Empty<string>(), false, $"日志文件不存在：{filePath}\n请确保服务器至少成功启动过一次。");
 
         try
         {
-            var logTag = _logTagToType.FirstOrDefault(t => t.Value == logType).Key;
-            if (!string.IsNullOrEmpty(logTag) && _activeLogType == logTag)
+            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            long fileLength = stream.Length;
+            DateTime lastWriteTimeUtc = File.GetLastWriteTimeUtc(filePath);
+            DateTime creationTimeUtc = File.GetCreationTimeUtc(filePath);
+            bool fileWasReplaced = previousState != null
+                && previousState.CreationTimeUtc != creationTimeUtc;
+            bool sameSizeRewrite = previousState != null
+                && fileLength == previousState.FileLength
+                && lastWriteTimeUtc != previousState.LastWriteTimeUtc;
+            bool checkpointChanged = previousState != null
+                && !MatchesLogCheckpoint(stream, previousState.ReadPosition, previousState.Checkpoint);
+            bool shouldReload = forceReload || previousState == null || fileWasReplaced
+                || sameSizeRewrite || checkpointChanged || fileLength < previousState.FileLength;
+
+            if (shouldReload)
             {
-                Dispatcher.Invoke(() => LoadLogByType(logType, forceRefresh: true));
+                var snapshot = ReadLogSnapshot(stream, fileLength, MAX_LOG_LINES);
+                if (!IsSameLogFileSnapshot(filePath, fileLength, lastWriteTimeUtc, creationTimeUtc))
+                    throw new IOException("日志文件在读取期间被修改或替换，请稍后重试。");
+                var state = new LogFileReadState(fileLength, lastWriteTimeUtc, creationTimeUtc,
+                    snapshot.ReadPosition, snapshot.PendingBytes, snapshot.Lines.ToList(), snapshot.FirstLinePending,
+                    ReadLogCheckpoint(stream, snapshot.ReadPosition));
+                return new LogReadResult(state, Array.Empty<string>(), true, null);
             }
+
+            var nextState = previousState!.Clone();
+            stream.Position = previousState.ReadPosition;
+            long snapshotLength = stream.Length;
+            if (snapshotLength < previousState.FileLength)
+            {
+                var snapshot = ReadLogSnapshot(stream, snapshotLength, MAX_LOG_LINES);
+                DateTime resetLastWriteTime = File.GetLastWriteTimeUtc(filePath);
+                DateTime resetCreationTime = File.GetCreationTimeUtc(filePath);
+                if (!IsSameLogFileSnapshot(filePath, snapshotLength, resetLastWriteTime, resetCreationTime))
+                    throw new IOException("日志文件在读取期间被修改或替换，请稍后重试。");
+                var resetState = new LogFileReadState(snapshotLength, File.GetLastWriteTimeUtc(filePath),
+                    File.GetCreationTimeUtc(filePath), snapshot.ReadPosition, snapshot.PendingBytes,
+                    snapshot.Lines.ToList(), snapshot.FirstLinePending, ReadLogCheckpoint(stream, snapshot.ReadPosition));
+                return new LogReadResult(resetState, Array.Empty<string>(), true, null);
+            }
+            byte[] appendedBytes = ReadRemainingBytes(stream, snapshotLength - stream.Position);
+            byte[] combined = new byte[previousState.PendingBytes.Length + appendedBytes.Length];
+            Buffer.BlockCopy(previousState.PendingBytes, 0, combined, 0, previousState.PendingBytes.Length);
+            Buffer.BlockCopy(appendedBytes, 0, combined, previousState.PendingBytes.Length, appendedBytes.Length);
+
+            var newLines = new List<string>();
+            int lineStart = 0;
+            for (int i = 0; i < combined.Length; i++)
+            {
+                if (combined[i] != (byte)'\n')
+                    continue;
+
+                int lineLength = i - lineStart;
+                if (lineLength > 0 && combined[i - 1] == (byte)'\r')
+                    lineLength--;
+                newLines.Add(DecodeLogLine(combined, lineStart, lineLength, nextState.IsFirstLinePending));
+                nextState.IsFirstLinePending = false;
+                lineStart = i + 1;
+            }
+
+            nextState.PendingBytes = combined.Skip(lineStart).ToArray();
+            nextState.ReadPosition = snapshotLength;
+            nextState.FileLength = snapshotLength;
+            nextState.LastWriteTimeUtc = File.GetLastWriteTimeUtc(filePath);
+            nextState.CreationTimeUtc = File.GetCreationTimeUtc(filePath);
+            nextState.Lines.AddRange(newLines);
+            if (nextState.Lines.Count > MAX_LOG_LINES)
+                nextState.Lines.RemoveRange(0, nextState.Lines.Count - MAX_LOG_LINES);
+
+            DateTime appendedLastWriteTime = File.GetLastWriteTimeUtc(filePath);
+            DateTime appendedCreationTime = File.GetCreationTimeUtc(filePath);
+            if (!IsSameLogFileSnapshot(filePath, snapshotLength, appendedLastWriteTime, appendedCreationTime))
+                throw new IOException("日志文件在读取期间被修改或替换，请稍后重试。");
+            nextState.LastWriteTimeUtc = appendedLastWriteTime;
+            nextState.CreationTimeUtc = appendedCreationTime;
+            nextState.Checkpoint = ReadLogCheckpoint(stream, snapshotLength);
+
+            return new LogReadResult(nextState, newLines.ToArray(), false, null);
         }
         catch (Exception ex)
         {
-            ShowLogError($"更新 {logType} 日志失败: {ex.Message}");
+            return new LogReadResult(null, Array.Empty<string>(), false, $"读取服务器日志失败：{ex.Message}");
         }
     }
 
+    /// <summary>
+    /// 判断读取前后的日志文件是否保持相同状态。
+    /// </summary>
+    /// <param name="filePath">要读取或检查的文件路径。</param>
+    /// <param name="expectedLength">预期的文件长度。</param>
+    /// <param name="expectedLastWriteTimeUtc">预期的 UTC 修改时间。</param>
+    /// <param name="expectedCreationTimeUtc">预期的 UTC 创建时间。</param>
+    /// <returns>操作是否成功。</returns>
+    private static bool IsSameLogFileSnapshot(string filePath, long expectedLength,
+        DateTime expectedLastWriteTimeUtc, DateTime expectedCreationTimeUtc)
+    {
+        var info = new FileInfo(filePath);
+        return info.Exists
+            && info.Length == expectedLength
+            && info.LastWriteTimeUtc == expectedLastWriteTimeUtc
+            && info.CreationTimeUtc == expectedCreationTimeUtc;
+    }
+
+    /// <summary>
+    /// 读取日志指定位置附近的校验字节。
+    /// </summary>
+    /// <param name="stream">要操作的文件流。</param>
+    /// <param name="position">文件中的字节位置。</param>
+    /// <returns>读取到的字节数据。</returns>
+    private static byte[] ReadLogCheckpoint(FileStream stream, long position)
+    {
+        const int checkpointLength = 64;
+        int length = (int)Math.Min(checkpointLength, position);
+        if (length == 0)
+            return Array.Empty<byte>();
+
+        byte[] checkpoint = new byte[length];
+        stream.Position = position - length;
+        int read = 0;
+        while (read < length)
+        {
+            int count = stream.Read(checkpoint, read, length - read);
+            if (count == 0)
+                break;
+            read += count;
+        }
+        return read == length ? checkpoint : checkpoint.Take(read).ToArray();
+    }
+
+    /// <summary>
+    /// 比较当前日志校验字节与此前保存的校验值。
+    /// </summary>
+    /// <param name="stream">要操作的文件流。</param>
+    /// <param name="position">文件中的字节位置。</param>
+    /// <param name="checkpoint">用于比较的日志校验字节。</param>
+    /// <returns>操作是否成功。</returns>
+    private static bool MatchesLogCheckpoint(FileStream stream, long position, byte[] checkpoint)
+    {
+        if (checkpoint.Length == 0)
+            return true;
+        if (position < checkpoint.Length || stream.Length < position)
+            return false;
+
+        byte[] current = ReadLogCheckpoint(stream, position);
+        return checkpoint.AsSpan().SequenceEqual(current);
+    }
+
+    /// <summary>
+    /// 从日志文件快照中读取最近指定数量的完整日志行。
+    /// </summary>
+    /// <param name="stream">要读取的日志文件流。</param>
+    /// <param name="snapshotLength">本次读取快照的字节长度。</param>
+    /// <param name="lineCount">要保留的最近日志行数。</param>
+    /// <returns>包含日志行、读取位置、未完成行字节和首行状态的结果。</returns>
+    private static (string[] Lines, long ReadPosition, byte[] PendingBytes, bool FirstLinePending) ReadLogSnapshot(
+        FileStream stream, long snapshotLength, int lineCount)
+    {
+        var lines = new Queue<string>(lineCount);
+        var currentLine = new List<byte>();
+        var chunk = new byte[64 * 1024];
+        long startPosition = FindSnapshotStartPosition(stream, snapshotLength, lineCount);
+        long remaining = snapshotLength - startPosition;
+        long bytesReadTotal = 0;
+        long readPosition = startPosition;
+        stream.Position = startPosition;
+
+        while (remaining > 0)
+        {
+            int read = stream.Read(chunk, 0, (int)Math.Min(chunk.Length, remaining));
+            if (read == 0)
+                break;
+            bytesReadTotal += read;
+            remaining -= read;
+
+            for (int i = 0; i < read; i++)
+            {
+                byte value = chunk[i];
+                if (value != (byte)'\n')
+                {
+                    currentLine.Add(value);
+                    continue;
+                }
+
+                int lineLength = currentLine.Count;
+                if (lineLength > 0 && currentLine[lineLength - 1] == (byte)'\r')
+                    lineLength--;
+                string line = DecodeLogLine(currentLine.ToArray(), 0, lineLength, lines.Count == 0 && readPosition == 0);
+                if (lines.Count == lineCount)
+                    lines.Dequeue();
+                lines.Enqueue(line);
+                currentLine.Clear();
+                readPosition = startPosition + bytesReadTotal - (read - i - 1);
+            }
+        }
+
+        if (bytesReadTotal != snapshotLength - startPosition)
+            throw new IOException("读取期间日志文件长度发生变化，请稍后重试。");
+        return (lines.ToArray(), snapshotLength, currentLine.ToArray(), startPosition == 0 && lines.Count == 0);
+    }
+
+    /// <summary>
+    /// 从日志末尾定位最近指定行数的起始位置。
+    /// </summary>
+    /// <param name="stream">要操作的文件流。</param>
+    /// <param name="snapshotLength">本次日志快照长度。</param>
+    /// <param name="lineCount">要保留或读取的最大行数。</param>
+    /// <returns>最近指定行数对应的起始字节位置。</returns>
+    private static long FindSnapshotStartPosition(FileStream stream, long snapshotLength, int lineCount)
+    {
+        const int chunkSize = 8192;
+        var buffer = new byte[chunkSize];
+        long position = snapshotLength;
+        int newlineCount = 0;
+
+        while (position > 0)
+        {
+            int count = (int)Math.Min(chunkSize, position);
+            position -= count;
+            stream.Position = position;
+            int bytesRead = stream.Read(buffer, 0, count);
+            for (int i = bytesRead - 1; i >= 0; i--)
+            {
+                if (buffer[i] == (byte)'\n' && ++newlineCount > lineCount)
+                    return position + i + 1;
+            }
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// 将指定字节范围解码为一行日志文本。
+    /// </summary>
+    /// <param name="bytes">日志字节数组。</param>
+    /// <param name="offset">字节数组中的起始偏移量。</param>
+    /// <param name="count">要处理的字节数。</param>
+    /// <param name="isFirstLine">当前文本是否为文件第一行。</param>
+    /// <returns>生成的文本结果。</returns>
+    private static string DecodeLogLine(byte[] bytes, int offset, int count, bool isFirstLine)
+    {
+        if (isFirstLine && count >= 3 && bytes[offset] == 0xEF && bytes[offset + 1] == 0xBB && bytes[offset + 2] == 0xBF)
+        {
+            offset += 3;
+            count -= 3;
+        }
+        return Encoding.UTF8.GetString(bytes, offset, count);
+    }
+
+    /// <summary>
+    /// 从文件流当前位置读取指定字节数。
+    /// </summary>
+    /// <param name="stream">要操作的文件流。</param>
+    /// <param name="byteCount">要读取的字节数。</param>
+    /// <returns>读取到的字节数据。</returns>
+    private static byte[] ReadRemainingBytes(FileStream stream, long byteCount)
+    {
+        if (byteCount <= 0)
+            return Array.Empty<byte>();
+        using var buffer = new MemoryStream();
+        var chunk = new byte[64 * 1024];
+        long remaining = byteCount;
+        while (remaining > 0)
+        {
+            int read = stream.Read(chunk, 0, (int)Math.Min(chunk.Length, remaining));
+            if (read == 0)
+                break;
+            buffer.Write(chunk, 0, read);
+            remaining -= read;
+        }
+        return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// 删除日志视图中超过保留上限的旧行。
+    /// </summary>
+    /// <param name="logBox">要裁剪行数的日志文本框。</param>
+    private void TrimDisplayedLogLines(RichTextBox logBox)
+    {
+        while (logBox.Document.Blocks.Count > MAX_LOG_LINES)
+            logBox.Document.Blocks.Remove(logBox.Document.Blocks.FirstBlock);
+    }
+
+    /// <summary>
+    /// 设置服务器日志状态提示的内容和可见性。
+    /// </summary>
+    /// <param name="message">要显示或发送的消息内容。</param>
+    private void SetServerLogStatus(string? message)
+    {
+        ServerLogStatusTextBlock.Text = message ?? string.Empty;
+        ServerLogStatusTextBlock.Visibility = string.IsNullOrWhiteSpace(message)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    #endregion ServerLogLoading
+
+    #region RunningServerRestore
+
+    /// <summary>
+    /// 关联已经运行的服务器进程并启动配置要求的服务器。
+    /// </summary>
+    /// <returns>表示异步操作。</returns>
     private async Task RestoreRunningServers()
     {
         foreach (var server in SsmSettings.Servers)
@@ -739,6 +1107,15 @@ public partial class MainWindow : Window
         await Task.CompletedTask;
     }
 
+    #endregion RunningServerRestore
+
+    #region DialogHelpers
+
+    /// <summary>
+    /// 显示指定错误内容的确认对话框。
+    /// </summary>
+    /// <param name="message">要显示或发送的消息内容。</param>
+    /// <returns>表示异步操作。</returns>
     public async Task ShowErrorDialog(string message)
     {
         var dialog = new ContentDialog
@@ -750,6 +1127,15 @@ public partial class MainWindow : Window
         await dialog.ShowAsync();
     }
 
+    #endregion DialogHelpers
+
+    #region LogRenderingAndMonitoring
+
+    /// <summary>
+    /// 将服务器日志行添加到界面并按内容着色。
+    /// </summary>
+    /// <param name="logType">日志视图类型。</param>
+    /// <param name="line">待添加到日志视图的文本行。</param>
     private void AppendLogLine(LogType logType, string line)
     {
         var paragraph = new Paragraph();
@@ -759,6 +1145,12 @@ public partial class MainWindow : Window
         _logTypeToTexbox[logType].Document.Blocks.Add(paragraph);
     }
 
+    /// <summary>
+    /// 将带时间戳和指定颜色的消息写入目标日志视图。
+    /// </summary>
+    /// <param name="logType">日志视图类型。</param>
+    /// <param name="message">要显示或发送的消息内容。</param>
+    /// <param name="color">消息显示颜色。</param>
     public void InternalShowLogMsg(LogType logType, string message, Brush color)
     {
         RichTextBox targetTextBox = _logTypeToTexbox[logType];
@@ -778,6 +1170,11 @@ public partial class MainWindow : Window
 
     }
 
+    /// <summary>
+    /// 根据日志文字中的错误或警告标记返回显示颜色。
+    /// </summary>
+    /// <param name="line">待检查的日志文本行。</param>
+    /// <returns>用于显示该日志行的文字颜色。</returns>
     private Brush GetLogColor(string line)
     {
         if (string.IsNullOrEmpty(line)) return Brushes.AliceBlue;
@@ -790,14 +1187,192 @@ public partial class MainWindow : Window
         return Brushes.White;
     }
 
-    private void StartActiveLogWatcher()
+    /// <summary>
+    /// 监听当前服务器日志文件并启用兜底刷新。
+    /// </summary>
+    private void ConfigureActiveLogMonitoring()
     {
-        if (_logWatchers.TryGetValue(_logTagToType[_activeLogType], out var watcher))
+        if (!Dispatcher.CheckAccess())
         {
-            watcher.EnableRaisingEvents = true;
+            Dispatcher.BeginInvoke(new Action(ConfigureActiveLogMonitoring));
+            return;
+        }
+
+        StopActiveLogMonitoring();
+        if (_currentServer == null || _activeLogType != "WSServer"
+            || _currentServer.Runtime?.State != ServerRuntime.ServerState.运行中)
+            return;
+
+        string logPath = Path.GetFullPath(_ssmPathManager.LogsPath);
+        string? logDirectory = Path.GetDirectoryName(logPath);
+        if (string.IsNullOrWhiteSpace(logDirectory))
+            return;
+
+        _watchedLogPath = logPath;
+        if (Directory.Exists(logDirectory))
+        {
+            try
+            {
+                _activeLogWatcher = new FileSystemWatcher(logDirectory, Path.GetFileName(logPath))
+                {
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                    IncludeSubdirectories = false,
+                    EnableRaisingEvents = false
+                };
+                _activeLogWatcher.Changed += (_, _) => QueueLogFileChange(logPath, forceReload: false);
+                _activeLogWatcher.Created += (_, _) => QueueLogFileChange(logPath, forceReload: true);
+                _activeLogWatcher.Deleted += (_, _) => QueueLogFileChange(logPath, forceReload: true);
+                _activeLogWatcher.Renamed += (_, _) => QueueLogFileChange(logPath, forceReload: true);
+                _activeLogWatcher.Error += (_, _) => QueueLogFileChange(logPath, forceReload: true);
+                _activeLogWatcher.EnableRaisingEvents = true;
+            }
+            catch (Exception ex)
+            {
+                ShowLogWarning($"无法监听服务器日志，将使用定时检查：{ex.Message}");
+                _activeLogWatcher?.Dispose();
+                _activeLogWatcher = null;
+            }
+        }
+
+        _logUpdateTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+        _logUpdateTimer.Tick -= LogUpdateTimer_Tick;
+        _logUpdateTimer.Tick += LogUpdateTimer_Tick;
+        _logUpdateTimer.Start();
+    }
+
+    /// <summary>
+    /// 停止并释放当前日志文件监听器及定时器。
+    /// </summary>
+    private void StopActiveLogMonitoring()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(StopActiveLogMonitoring));
+            return;
+        }
+
+        _logUpdateTimer?.Stop();
+        if (_activeLogWatcher != null)
+        {
+            _activeLogWatcher.EnableRaisingEvents = false;
+            _activeLogWatcher.Dispose();
+            _activeLogWatcher = null;
+        }
+        _watchedLogPath = null;
+    }
+
+    /// <summary>
+    /// 处理日志文件系统变更并请求增量刷新。
+    /// </summary>
+    /// <param name="sourcePath">发生变化的日志文件路径。</param>
+    /// <param name="forceReload">是否强制重新读取完整日志快照。</param>
+    private void QueueLogFileChange(string sourcePath, bool forceReload)
+    {
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            return;
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_watchedLogPath == null || _activeLogType != "WSServer"
+                || !string.Equals(_watchedLogPath, sourcePath, StringComparison.OrdinalIgnoreCase))
+                return;
+            RequestLogRefresh(forceReload);
+        }));
+    }
+
+    /// <summary>
+    /// 服务器运行状态变化时重新配置日志监听。
+    /// </summary>
+    private void RefreshActiveLogMonitoringForStateChange()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(RefreshActiveLogMonitoringForStateChange));
+            return;
+        }
+
+        ConfigureActiveLogMonitoring();
+    }
+
+    /// <summary>
+    /// 保存日志文件的读取位置、文件标识和最近读取内容。
+    /// </summary>
+    private sealed class LogFileReadState
+    {
+        public long FileLength { get; set; }
+        public DateTime LastWriteTimeUtc { get; set; }
+        public DateTime CreationTimeUtc { get; set; }
+        public long ReadPosition { get; set; }
+        public byte[] PendingBytes { get; set; }
+        public List<string> Lines { get; set; }
+        public bool IsFirstLinePending { get; set; }
+        public byte[] Checkpoint { get; set; }
+
+        /// <summary>
+        /// 创建日志文件读取状态对象。
+        /// </summary>
+        /// <param name="fileLength">当前日志文件长度。</param>
+        /// <param name="lastWriteTimeUtc">日志文件最后修改时间（UTC）。</param>
+        /// <param name="creationTimeUtc">日志文件创建时间（UTC）。</param>
+        /// <param name="readPosition">下一次增量读取的文件位置。</param>
+        /// <param name="pendingBytes">尚未构成完整日志行的字节。</param>
+        /// <param name="lines">当前缓存的日志行。</param>
+        /// <param name="isFirstLinePending">是否仍需处理文件首行的编码标记。</param>
+        /// <param name="checkpoint">用于识别文件变化的校验字节。</param>
+        public LogFileReadState(long fileLength, DateTime lastWriteTimeUtc, DateTime creationTimeUtc,
+            long readPosition, byte[] pendingBytes, List<string> lines, bool isFirstLinePending, byte[] checkpoint)
+        {
+            FileLength = fileLength;
+            LastWriteTimeUtc = lastWriteTimeUtc;
+            CreationTimeUtc = creationTimeUtc;
+            ReadPosition = readPosition;
+            PendingBytes = pendingBytes;
+            Lines = lines;
+            IsFirstLinePending = isFirstLinePending;
+            Checkpoint = checkpoint;
+        }
+
+        /// <summary>
+        /// 复制日志读取状态，避免后续增量读取修改原状态。
+        /// </summary>
+        /// <returns>包含相同读取数据的新状态对象。</returns>
+        public LogFileReadState Clone() => new(FileLength, LastWriteTimeUtc, CreationTimeUtc,
+            ReadPosition, PendingBytes.ToArray(), Lines.ToList(), IsFirstLinePending, Checkpoint.ToArray());
+    }
+
+    /// <summary>
+    /// 保存一次日志读取操作的结果信息。
+    /// </summary>
+    private sealed class LogReadResult
+    {
+        public LogFileReadState? State { get; }
+        public string[] NewLines { get; }
+        public bool Reloaded { get; }
+        public string? Error { get; }
+
+        /// <summary>
+        /// 创建日志读取结果对象。
+        /// </summary>
+        /// <param name="state">读取后的文件状态。</param>
+        /// <param name="newLines">本次新增的日志行。</param>
+        /// <param name="reloaded">是否重新读取完整快照。</param>
+        /// <param name="error">读取失败时的错误说明。</param>
+        public LogReadResult(LogFileReadState? state, string[] newLines, bool reloaded, string? error)
+        {
+            State = state;
+            NewLines = newLines;
+            Reloaded = reloaded;
+            Error = error;
         }
     }
 
+    #endregion LogRenderingAndMonitoring
+
+    #region AppVersionCheck
+
+    /// <summary>
+    /// 在线检查管理器版本并在主控制台显示结果。
+    /// </summary>
     private async void LookForAppUpdate()
     {
         using var httpClient = new HttpClient
@@ -833,7 +1408,7 @@ public partial class MainWindow : Window
             {
                 SsmSettings.AppSettings.HasNewVersion = true;
                 SsmSettings.AppSettings.NewVersion = latestVersion;
-                ShowLogWarning($"发现新版本：{latestVersion}，可点击左下角更新");
+                ShowLogWarning($"发现新版本：{latestVersion}，可点击左下角版本号进行更新");
             }
             else
             {
@@ -870,6 +1445,15 @@ public partial class MainWindow : Window
             ShowLogError($"检查更新出错：{ex.Message}");
         }
     }
+    #endregion AppVersionCheck
+
+    #region BackupRetention
+
+    /// <summary>
+    /// 按保留数量删除较旧的服务器地图存档备份。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
+    /// <param name="keepCount">要保留的最新备份数量。</param>
     private static void CleanOldBackups(Server server, int keepCount)
     {
         try
@@ -904,6 +1488,13 @@ public partial class MainWindow : Window
         { }
     }
 
+    #endregion BackupRetention
+
+    #region AutomaticUpdateAndRestart
+
+    /// <summary>
+    /// 周期检查服务器更新并按设置执行自动更新。
+    /// </summary>
     private async void AutoUpdateLoop()
     {
         while (await AutoUpdateTimer.WaitForNextTickAsync())
@@ -924,6 +1515,9 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 并行处理符合自动重启条件的服务器。
+    /// </summary>
     private async void AutoRestart()
     {
         List<Task> serverTasks = new List<Task>();
@@ -958,6 +1552,14 @@ public partial class MainWindow : Window
         ShowLogDefault($"自动重启完成。");
     }
 
+    #endregion AutomaticUpdateAndRestart
+
+    #region PlayerDataRefresh
+
+    /// <summary>
+    /// 异步刷新当前服务器的在线玩家列表。
+    /// </summary>
+    /// <returns>表示异步操作。</returns>
     private async Task RefreshPlayersAsync()
     {
         ServerSettings serverSettings = ServerSettingsEditor.LoadServerSettings(_ssmPathManager.ServerSettings);
@@ -982,6 +1584,14 @@ public partial class MainWindow : Window
         }
     }
 
+    #endregion PlayerDataRefresh
+
+    #region WebhookNotifications
+
+    /// <summary>
+    /// 通过已配置的 Discord Webhook 发送消息。
+    /// </summary>
+    /// <param name="message">要显示或发送的消息内容。</param>
     private void SendDiscordMessage(string message)
     {
         if (SsmSettings.WebhookSettings.Enabled == false || message == "")
@@ -1001,10 +1611,14 @@ public partial class MainWindow : Window
         DiscordSender.SendMessage(message);
     }
 
+    #endregion WebhookNotifications
+
+    #region GameServerUpdate
+
     /// <summary>
-    /// Updates SteamCMD, used when the executable could not be found
+    /// 检查并更新 SteamCMD 工具。
     /// </summary>
-    /// <returns><see cref="bool"/> true if succeeded</returns>
+    /// <returns>异步操作是否成功。</returns>
     private async Task<bool> UpdateSteamCMD()
     {
         string workingDir = Directory.GetCurrentDirectory();
@@ -1028,6 +1642,11 @@ public partial class MainWindow : Window
         return true;
     }
 
+    /// <summary>
+    /// 使用 SteamCMD 更新指定服务器的游戏文件。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
+    /// <returns>异步操作是否成功。</returns>
     private async Task<bool> UpdateGame(Server server)
     {
         if (server.Runtime.State == ServerRuntime.ServerState.更新中)
@@ -1236,6 +1855,9 @@ public partial class MainWindow : Window
             }
         }
     }
+    /// <summary>
+    /// 终止当前正在执行的 SteamCMD 更新进程。
+    /// </summary>
     private void KillCurrentServerSteamcmd()
     {
         if (_currentServer == null) return;
@@ -1258,6 +1880,15 @@ public partial class MainWindow : Window
         }
     }
 
+    #endregion GameServerUpdate
+
+    #region ServerLifecycle
+
+    /// <summary>
+    /// 准备并启动服务器，更新其运行状态并保存应用配置。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
+    /// <returns>异步操作是否成功。</returns>
     private async Task<bool> StartServer(Server server)
     {
         if (server.Runtime.Process != null)
@@ -1269,7 +1900,7 @@ public partial class MainWindow : Window
         try
         {
             var ssmPath = new SSMPathManager(Directory.GetCurrentDirectory(), server);
-            ServerSettings jsonObject = ServerSettingsEditor.LoadServerSettings(ssmPath.ServerSettings);
+            ServerSettings jsonObject = await ServerSettingsEditor.LoadServerSettingsAsync(ssmPath.ServerSettings);
             server = SsmSettings.Servers.FirstOrDefault(s => s.ssmServerName == server.ssmServerName) ?? server;
 
             ShowLogWarning($"启动服务器：{server.ssmServerName}{(server.Runtime.RestartAttempts > 0 ? $" 尝试 {server.Runtime.RestartAttempts}/3" : "")}");
@@ -1285,21 +1916,20 @@ public partial class MainWindow : Window
                     return false;
                 }
                 ShowLogWarning("未找到 StartServer.bat，正在自动创建...");
-                TryCreateStartServerBatFromSettings(server);
+                await Task.Run(() => TryCreateStartServerBatFromSettings(server));
             }
             else
             {
-                TryCreateStartServerBatFromSettings(server);
+                await Task.Run(() => TryCreateStartServerBatFromSettings(server));
             }
 
             if (jsonObject.ServerId <= 0)
             {
                 jsonObject.ServerId = ServerSettingsEditor.GetNextAvailableServerId(SsmSettings.Servers);
-                ServerSettingsEditor.SaveServerSettings(server, jsonObject);
             }
             //if (File.Exists(ssmPath.EngineIniPath))
                 //ServerSettingsEditor.IniWriteName(jsonObject, ssmPath.EngineIniPath);
-            ServerSettingsEditor.SaveServerSettings(server, jsonObject);
+            await ServerSettingsEditor.SaveServerSettingsAsync(server, jsonObject);
 
             if (SsmSettings.WebhookSettings.Enabled && !string.IsNullOrEmpty(server.WebhookMessages.StartServer) && server.WebhookMessages.Enabled)
             {
@@ -1356,12 +1986,30 @@ public partial class MainWindow : Window
                 EnableRaisingEvents = true
             };
 
-            serverProcess.Exited += (sender, e) => ServerProcessExited(sender, e, server);
-            serverProcess.Start();
+            var processStateReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            serverProcess.Exited += async (sender, e) =>
+            {
+                await processStateReady.Task.ConfigureAwait(false);
+                if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+                    await Dispatcher.InvokeAsync(() => ServerProcessExited(sender, e, server));
+            };
 
-            server.Runtime.State = ServerRuntime.ServerState.运行中;
-            server.Runtime.UserStopped = false;
-            server.Runtime.Process = serverProcess;
+            try
+            {
+                bool processStarted = await Task.Run(() => serverProcess.Start());
+                if (!processStarted)
+                    throw new InvalidOperationException("Windows 未能创建服务器进程。");
+
+                server.Runtime.State = ServerRuntime.ServerState.运行中;
+                server.Runtime.UserStopped = false;
+                server.Runtime.Process = serverProcess;
+            }
+            finally
+            {
+                processStateReady.TrySetResult(true);
+            }
+
+            RefreshActiveLogMonitoringForStateChange();
 
             await Task.Delay(3000);
             ShowWindow(serverProcess.MainWindowHandle, SW_MINIMIZE);
@@ -1372,7 +2020,7 @@ public partial class MainWindow : Window
             StartBackupCleanTimer(server, jsonObject.AutoCleanInterval, jsonObject.AutoSaveCount);
             ShowLogDefault($"启动成功：{server.ssmServerName} | {(jsonObject.Map == "Level01_Main" ? "云雾之森" : "金色浮沙")} | {jsonObject.SteamServerName}");
 
-            MainSettings.Save(SsmSettings);
+            await MainSettings.SaveAsync(SsmSettings);
             return true;
         }
         catch (Exception ex)
@@ -1382,6 +2030,10 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 根据服务器设置创建或更新启动批处理文件。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
     private static void TryCreateStartServerBatFromSettings(Server server)
     {
         string batPath = Path.Combine(server.Path, "StartServer.bat");
@@ -1448,6 +2100,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 尝试正常关闭指定服务器，并在必要时清理进程。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
+    /// <returns>异步操作是否成功。</returns>
     private async Task<bool> StopServer(Server server)
     {
         string settingsPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
@@ -1490,6 +2147,8 @@ public partial class MainWindow : Window
 
             server.Runtime.State = ServerRuntime.ServerState.已停止;
             server.Runtime.Process = null;
+            if (ReferenceEquals(_currentServer, server))
+                RefreshActiveLogMonitoringForStateChange();
             ShowLogDefault($"服务器 {server.ssmServerName} 已完全关闭");
             return true;
         }
@@ -1500,6 +2159,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 停止指定服务器，并在成功后重新启动。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
+    /// <returns>异步操作是否成功。</returns>
     private async Task<bool> RestartServer(Server server)
     {
         ShowLogWarning($"正在重启服务器：" + server.ssmServerName);
@@ -1540,6 +2204,12 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 异步等待指定进程退出，直到成功退出或达到超时时间。
+    /// </summary>
+    /// <param name="process">要等待或关闭的进程。</param>
+    /// <param name="timeoutSeconds">等待超时时间（秒）。</param>
+    /// <returns>异步操作是否成功。</returns>
     private async Task<bool> WaitForProcessExitAsync(Process process, int timeoutSeconds)
     {
         if (process == null || process.HasExited)
@@ -1558,21 +2228,48 @@ public partial class MainWindow : Window
 
     private const int SW_MINIMIZE = 2; // 最小化
 
+    /// <summary>
+    /// 调用 Windows API 按类名和标题查找窗口句柄。
+    /// </summary>
+    /// <param name="lpClassName">要匹配的窗口类名。</param>
+    /// <param name="lpWindowName">要匹配的窗口标题。</param>
+    /// <returns>窗口句柄。</returns>
     [DllImport("user32.dll")]
     private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
+    /// <summary>
+    /// 调用 Windows API 获取窗口对应的线程和进程标识。
+    /// </summary>
+    /// <param name="hWnd">要操作的窗口句柄。</param>
+    /// <param name="lpdwProcessId">接收进程标识的输出参数。</param>
+    /// <returns>Windows API 返回的无符号整数。</returns>
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
+    /// <summary>
+    /// 调用 Windows API 按给定命令显示或隐藏窗口。
+    /// </summary>
+    /// <param name="hWnd">要操作的窗口句柄。</param>
+    /// <param name="nCmdShow">窗口显示状态命令。</param>
+    /// <returns>操作是否成功。</returns>
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    /// <summary>
+    /// 隐藏指定窗口句柄对应的窗口。
+    /// </summary>
+    /// <param name="hwnd">要操作的窗口句柄。</param>
     private void HideWindow(IntPtr hwnd)
     {
         if (hwnd != IntPtr.Zero)
             ShowWindow(hwnd, 0); 
     }
 
+    /// <summary>
+    /// 根据窗口标题查找进程标识。
+    /// </summary>
+    /// <param name="windowTitle">要查找的窗口标题。</param>
+    /// <returns>操作返回的整数结果。</returns>
     private int GetProcessIdByWindowTitle(string windowTitle)
     {
         try
@@ -1587,17 +2284,10 @@ public partial class MainWindow : Window
     }
 
 
-    private bool IsProcessRunning(int pid)
-    {
-        if (pid <= 0) return false;
-        try
-        {
-            return !Process.GetProcessById(pid).HasExited;
-        }
-        catch { return false; }
-    }
-
-
+    /// <summary>
+    /// 停止服务器、更新游戏文件并尝试恢复服务器运行。
+    /// </summary>
+    /// <returns>表示异步操作。</returns>
     private async Task AutoUpdate()
     {
         SendDiscordMessage(SsmSettings.WebhookSettings.UpdateFound);
@@ -1643,6 +2333,12 @@ public partial class MainWindow : Window
         ShowLogDefault("所有服务器自动更新并重启完成");
     }
 
+    /// <summary>
+    /// 向服务器进程发送关闭信号并等待其退出。
+    /// </summary>
+    /// <param name="process">要等待或关闭的进程。</param>
+    /// <param name="timeoutSeconds">等待超时时间（秒）。</param>
+    /// <returns>异步操作是否成功。</returns>
     private async Task<bool> TryGracefulShutdownAsync(Process process, int timeoutSeconds)
     {
         if (process == null || process.HasExited)
@@ -1653,11 +2349,20 @@ public partial class MainWindow : Window
         return await WaitForProcessExitAsync(process, timeoutSeconds);
     }
 
+    /// <summary>
+    /// 调用 Windows API 将指定窗口置于前台。
+    /// </summary>
+    /// <param name="hWnd">要操作的窗口句柄。</param>
+    /// <returns>操作是否成功。</returns>
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     private const int SW_RESTORE = 9;
 
+    /// <summary>
+    /// 激活服务器窗口并向其发送 Ctrl+C 信号。
+    /// </summary>
+    /// <param name="targetProcess">要激活并发送按键的进程。</param>
     public void FocusWindowAndSendCtrlC(Process targetProcess)
     {
         if (targetProcess == null || targetProcess.HasExited)
@@ -1682,6 +2387,15 @@ public partial class MainWindow : Window
         }
     }
 
+    #endregion ServerLifecycle
+
+    #region ServerRemovalAndLogProcessing
+
+    /// <summary>
+    /// 移除指定服务器实例及其关联文件。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
+    /// <returns>异步操作是否成功。</returns>
     private async Task<bool> RemoveServer(Server server)
     {
         int serverIndex = SsmSettings.Servers.IndexOf(server);
@@ -1731,6 +2445,10 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 检查服务器是否存在可用更新。
+    /// </summary>
+    /// <returns>异步操作是否成功。</returns>
     private async Task<bool> CheckForUpdate()
     {
         bool foundUpdate = false;
@@ -1792,15 +2510,20 @@ public partial class MainWindow : Window
     }
 
     // 读取服务器日志并处理特定事件
+    /// <summary>
+    /// 读取服务器运行日志并处理首次启动和日志事件。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
     private async void ReadLog(Server server)
     {
-        ServerSettings jsonObject = ServerSettingsEditor.LoadServerSettings(Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json"));
-         
         if (server == null)
         {
             ShowLogError($"传入的服务器为空！");
             return;
         }
+
+        ServerSettings jsonObject = await ServerSettingsEditor.LoadServerSettingsAsync(
+            Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json"));
         string logPath = Path.Combine(server.Path, "WS", "Saved", "Logs", "WS.log");
         
         try
@@ -1821,7 +2544,8 @@ public partial class MainWindow : Window
                 ShowLogMsg($"【{server.ssmServerName}】已检测到日志文件：{logPath}", Brushes.Green);
             }
 
-            using FileStream fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using FileStream fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
+                bufferSize: 4096, useAsync: true);
             using StreamReader sr = new StreamReader(fs);
 
             while (server.FirstStart)
@@ -1842,7 +2566,7 @@ public partial class MainWindow : Window
                 }
             }
 
-            MainSettings.Save(SsmSettings);
+            await MainSettings.SaveAsync(SsmSettings);
             fs.Seek(0, SeekOrigin.End);
             long initialPosition = fs.Position;
         }
@@ -1858,7 +2582,15 @@ public partial class MainWindow : Window
 
     }
 
+    #endregion ServerRemovalAndLogProcessing
+
     #region Events
+    /// <summary>
+    /// 处理服务器进程退出，更新状态并执行必要的恢复操作。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
+    /// <param name="server">要处理的服务器实例。</param>
     private async void ServerProcessExited(object sender, EventArgs e, Server server)
     {
         if (server == null)
@@ -1889,6 +2621,8 @@ public partial class MainWindow : Window
 
         server.Runtime.State = ServerRuntime.ServerState.已停止;
         server.Runtime.Process = null;
+        if (ReferenceEquals(_currentServer, server))
+            RefreshActiveLogMonitoringForStateChange();
 
         StopBackupCleanTimer(server);
 
@@ -1973,6 +2707,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 响应应用设置变化并更新主题、壁纸或更新任务。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void AppSettings_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(AppSettings.WallpaperPath) ||
@@ -2024,6 +2763,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 服务器集合变化后选中最新添加的服务器。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void Servers_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
         int serversLength = ServerTabControl.Items.Count;
@@ -2038,6 +2782,14 @@ public partial class MainWindow : Window
 
 
     #region Buttons
+
+    #region ServerControlButtons
+
+    /// <summary>
+    /// 处理启动服务器按钮并在启动成功后开始读取日志。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void StartServerButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button button || button.DataContext is not Server server)
@@ -2056,7 +2808,6 @@ public partial class MainWindow : Window
                 return;
             }
             bool started = await StartServer(server);
-            await Task.Delay(3000);
 
             if (started == true)
             {
@@ -2073,6 +2824,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 处理服务器更新按钮，并支持取消正在执行的更新。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void UpdateServerButton_Click(object sender, RoutedEventArgs e)
     {
         Button button = (Button)sender;
@@ -2113,6 +2869,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 处理停止服务器按钮并报告停止过程中的异常。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void StopServerButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -2142,6 +2903,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 处理重启服务器按钮并在成功后读取服务器日志。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void RestartServerButton_Click(object sender, RoutedEventArgs e)
     {
         Button button = (Button)sender;
@@ -2157,6 +2923,15 @@ public partial class MainWindow : Window
             ReadLog(server);
     }
 
+    #endregion ServerControlButtons
+
+    #region AppearanceButtons
+
+    /// <summary>
+    /// 切换应用主题并保存主题设置。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void ThemeSelect_Click(object sender, RoutedEventArgs e)
     {
         if (ThemeManager.Current.ApplicationTheme == ApplicationTheme.Light)
@@ -2172,6 +2947,11 @@ public partial class MainWindow : Window
         MainSettings.Save(SsmSettings);
     }
 
+    /// <summary>
+    /// 打开背景图片管理窗口。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void ChangeWallpaper_Click(object sender, RoutedEventArgs e)
     {
         var manager = new BackgroundManagerWindow
@@ -2181,6 +2961,15 @@ public partial class MainWindow : Window
         manager.ShowDialog();
     }
 
+    #endregion AppearanceButtons
+
+    #region ServerManagementButtons
+
+    /// <summary>
+    /// 确认服务器状态允许后移除服务器并保存设置。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void RemoveServerButton_Click(object sender, RoutedEventArgs e)
     {
         Server server = ((Button)sender).DataContext as Server;
@@ -2206,6 +2995,11 @@ public partial class MainWindow : Window
         catch { }
     }
 
+    /// <summary>
+    /// 打开服务器重命名对话框并在确认后保存。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void RenameServerMenuItem_Click(object sender, RoutedEventArgs e)
     {
         var menuItem = sender as MenuItem;
@@ -2224,6 +3018,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 打开或激活服务器导入窗口。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void ImportServerButton_Click(object sender, RoutedEventArgs e)
     {
         Server server = ((Button)sender).DataContext as Server;
@@ -2246,6 +3045,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 打开或激活存档导入窗口。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void ChangeSaveButton_Click(object sender, RoutedEventArgs e)
     {
         Server server = ((Button)sender).DataContext as Server;
@@ -2268,6 +3072,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 打开或激活集群玩家数据转移窗口。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void ClusterPlayerDataTransferButton_Click(object sender, RoutedEventArgs e)
     {
         if (((Button)sender).DataContext is not Server server)
@@ -2282,13 +3091,22 @@ public partial class MainWindow : Window
             return;
         }
 
-        window = new ClusterPlayerDataTransferWindow(server)
+        window = new ClusterPlayerDataTransferWindow(server, SsmSettings)
         {
             Owner = this
         };
         window.ShowDialog();
     }
 
+    #endregion ServerManagementButtons
+
+    #region ConfigurationEditorButtons
+
+    /// <summary>
+    /// 打开或激活服务器连接配置编辑器。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void ServerSettingsEditorButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -2343,6 +3161,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 打开或激活服务器游戏设置编辑器。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void GameSettingsButtonEditor_Click(object sender, RoutedEventArgs e)
     {
         var editor = Application.Current.Windows.OfType<GameSettingsEditor>().FirstOrDefault();
@@ -2367,6 +3190,15 @@ public partial class MainWindow : Window
         }
     }
 
+    #endregion ConfigurationEditorButtons
+
+    #region NavigationAndManagerButtons
+
+    /// <summary>
+    /// 打开选定服务器目录并报告路径错误。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void ServerFolderButton_Click(object sender, RoutedEventArgs e)
     {
         Server server = ((Button)sender).DataContext as Server;
@@ -2407,6 +3239,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 打开新建服务器窗口。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void AddServerButton_Click(object sender, RoutedEventArgs e)
     {
         if (!Application.Current.Windows.OfType<CreateServer>().Any())
@@ -2416,6 +3253,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 打开模组管理窗口。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void ManageModsButton_Click(object sender, RoutedEventArgs e)
     {
         if (!Application.Current.Windows.OfType<ModManagerWindows>().Any())
@@ -2425,6 +3267,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 打开或激活管理器设置窗口。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void ManagerSettingsButton_Click(object sender, RoutedEventArgs e)
     {
         var mSettings = Application.Current.Windows.OfType<ManagerSettings>().FirstOrDefault();
@@ -2444,6 +3291,15 @@ public partial class MainWindow : Window
         }
     }
 
+    #endregion NavigationAndManagerButtons
+
+    #region VersionAndRconButtons
+
+    /// <summary>
+    /// 检查管理器版本并询问是否运行更新程序。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void VersionButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -2502,6 +3358,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 打开选定服务器的 RCON 控制台。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void RconServerButton_Click(object sender, RoutedEventArgs e)
     {
         Server server = ((Button)sender).DataContext as Server;
@@ -2514,11 +3375,25 @@ public partial class MainWindow : Window
     }
 
     // 修复工具
+    /// <summary>
+    /// 修复工具按钮的预留处理入口，供后续功能开发。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void FixTools_Click(object sender, RoutedEventArgs e)
     {
         
     }
 
+    #endregion VersionAndRconButtons
+
+    #region SupportButtons
+
+    /// <summary>
+    /// 打开项目支持页面并处理打开失败的情况。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void DonateButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -2536,6 +3411,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 打开问题反馈页面并处理打开失败的情况。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void ReportIssue_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -2553,14 +3433,29 @@ public partial class MainWindow : Window
         }
     }
 
+    #endregion SupportButtons
+
+    #region LogButtons
+
+    /// <summary>
+    /// 按按钮关联的日志类型重新加载日志。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void RefreshLogButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string logType)
         {
-            LoadLogByType(_logTagToType[logType], true);
+            if (_logTagToType.TryGetValue(logType, out LogType selectedLogType))
+                _ = LoadLogByTypeAsync(selectedLogType, forceReload: true);
         }
     }
 
+    /// <summary>
+    /// 清空当前选中的日志视图。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private void ClearLogButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && btn.Tag is string logType && _logTagToType.ContainsKey(logType))
@@ -2570,6 +3465,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 使用系统默认程序打开服务器日志文件。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void OpenLogButton_Click(object sender, RoutedEventArgs e)
     {
         if (_currentServer == null)
@@ -2618,6 +3518,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 使用文件管理器打开服务器日志目录。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void OpenLogFolderButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -2655,24 +3560,26 @@ public partial class MainWindow : Window
         }
     }
 
-    // 点击托盘显示或隐藏
-    private void TrayIcon_Click(object sender, RoutedEventArgs e)
-    {
-        if (Visibility == Visibility.Visible)
-            Hide();
-        else
-        {
-            Show();
-            Activate();
-        }
-    }
+    #endregion LogButtons
 
+    #region PlayerButtons
+
+    /// <summary>
+    /// 手动刷新在线玩家和封禁玩家列表。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void RefreshPlayerList_Click(object sender, RoutedEventArgs e) 
     {
         await RefreshPlayersAsync();
         LoadBannedPlayersFromFile();
     }
 
+    /// <summary>
+    /// 封禁选中的在线玩家并刷新玩家列表。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void BanPlayerMenuItem_Click(object sender, RoutedEventArgs e)
     {
         if (PlayerDataGrid.SelectedItem is not PlayerInfo selectedPlayer) return;
@@ -2684,6 +3591,11 @@ public partial class MainWindow : Window
         await RefreshPlayersAsync();
     }
 
+    /// <summary>
+    /// 踢出选中的在线玩家并刷新玩家列表。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void KickPlayerMenuItem_Click(object sender, RoutedEventArgs e)
     {
         if (PlayerDataGrid.SelectedItem is not PlayerInfo selectedPlayer) return;
@@ -2693,6 +3605,11 @@ public partial class MainWindow : Window
         await RefreshPlayersAsync();
     }
 
+    /// <summary>
+    /// 解除选中玩家的封禁并刷新列表。
+    /// </summary>
+    /// <param name="sender">触发事件的对象。</param>
+    /// <param name="e">事件参数。</param>
     private async void UnBanPlayerMenuItem_Click(object sender, RoutedEventArgs e)
     {
         if (BanListDataGrid.SelectedItem is not PlayerInfo selectedPlayer)
@@ -2704,8 +3621,15 @@ public partial class MainWindow : Window
         await RefreshPlayersAsync();
     }
 
+    #endregion PlayerButtons
+
     #endregion
 
+    #region BanListManagement
+
+    /// <summary>
+    /// 从服务器封禁名单文件重新加载玩家列表。
+    /// </summary>
     private void LoadBannedPlayersFromFile()
     {
         _bannedPlayers.Clear();
@@ -2723,29 +3647,13 @@ public partial class MainWindow : Window
         BanListDataGrid.ItemsSource = _bannedPlayers;
     }
 
-    private void DirectoryCopy(string sourceDir, string destDir, bool copySubDirs)
-    {
-        DirectoryInfo dir = new DirectoryInfo(sourceDir);
-        if (!dir.Exists) return;
+    #endregion BanListManagement
 
-        Directory.CreateDirectory(destDir);
+    #region WallpaperManagement
 
-        foreach (FileInfo file in dir.GetFiles())
-        {
-            string target = Path.Combine(destDir, file.Name);
-            file.CopyTo(target, true);
-        }
-
-        if (copySubDirs)
-        {
-            foreach (DirectoryInfo sub in dir.GetDirectories())
-            {
-                string targetSub = Path.Combine(destDir, sub.Name);
-                DirectoryCopy(sub.FullName, targetSub, true);
-            }
-        }
-    }
-
+    /// <summary>
+    /// 根据应用设置加载或清除壁纸和日志背景。
+    /// </summary>
     public void UpdateWallpaper()
     {
         if (SsmSettings.AppSettings.WallpaperEnabled &&
@@ -2783,11 +3691,15 @@ public partial class MainWindow : Window
         }
     }
 
+    #endregion WallpaperManagement
+
+    #region TimestampAndLogMessages
+
     /// <summary>
     /// 生成时间戳字符串
     /// </summary>
-    /// <param name="format" 时间戳格式/>
-    /// <returns>格式化后的时间戳字符串</returns>
+    /// <param name="format">时间戳格式名称，例如 file、log、unix 或 unix-ms。</param>
+    /// <returns>格式化后的当前本地时间字符串。</returns>
     public static string GetTimestamp(string format = "file")
     {
         DateTime now = DateTime.Now;
@@ -2802,9 +3714,27 @@ public partial class MainWindow : Window
         };
     }
 
+    /// <summary>
+    /// 以错误颜色向主控制台输出消息。
+    /// </summary>
+    /// <param name="message">要显示或发送的消息内容。</param>
     public void ShowLogError(string message) => ShowLogMsg($"{message}", Brushes.Red);
+    /// <summary>
+    /// 以警告颜色向主控制台输出消息。
+    /// </summary>
+    /// <param name="message">要显示或发送的消息内容。</param>
     public void ShowLogWarning(string message) => ShowLogMsg($"{message}", Brushes.Yellow);
+    /// <summary>
+    /// 以默认状态颜色向主控制台输出消息。
+    /// </summary>
+    /// <param name="message">要显示或发送的消息内容。</param>
     public void ShowLogDefault(string message) => ShowLogMsg($"{message}", Brushes.Lime);
+    /// <summary>
+    /// 按指定颜色和日志类型输出消息。
+    /// </summary>
+    /// <param name="message">要显示或发送的消息。</param>
+    /// <param name="color">消息显示颜色。</param>
+    /// <param name="logType">日志视图类型。</param>
     public void ShowLogMsg(string message, Brush color, LogType logType = LogType.MainConsole)
     {
         if (Dispatcher.CheckAccess())
@@ -2812,6 +3742,8 @@ public partial class MainWindow : Window
         else
             Dispatcher.Invoke(() => InternalShowLogMsg(logType, message, color));
     }
+
+    #endregion TimestampAndLogMessages
 }
 
 

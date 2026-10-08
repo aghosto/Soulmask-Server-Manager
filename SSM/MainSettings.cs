@@ -11,6 +11,7 @@ using ModernWpf;
 using ModernWpf.Controls;
 using System.Text.Encodings.Web;
 using System.Windows.Media;
+using System.Threading.Tasks;
 
 namespace SoulmaskServerManager;
 public class MainSettings : PropertyChangedBase
@@ -42,6 +43,13 @@ public class MainSettings : PropertyChangedBase
         string dir = Directory.GetCurrentDirectory() + @"\SSMSettings.json";
         string SettingsJSON = JsonSerializer.Serialize(settings, _jsonOptions);
         File.WriteAllText(dir, SettingsJSON);
+    }
+
+    public static async Task SaveAsync(MainSettings settings)
+    {
+        string path = Directory.GetCurrentDirectory() + @"\SSMSettings.json";
+        string settingsJson = JsonSerializer.Serialize(settings, _jsonOptions);
+        await File.WriteAllTextAsync(path, settingsJson);
     }
 
     /// <summary>
@@ -138,6 +146,12 @@ public class Server : PropertyChangedBase
     {
         get => _runWithoutWindow;
         set => SetField(ref _runWithoutWindow, value);
+    }
+    private string _playerDataTargetPath = string.Empty;
+    public string PlayerDataTargetPath
+    {
+        get => _playerDataTargetPath;
+        set => SetField(ref _playerDataTargetPath, value);
     }
     public string UniqueId { get; set; }
 }

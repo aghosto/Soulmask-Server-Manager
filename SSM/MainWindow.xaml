@@ -509,15 +509,26 @@
                             <CheckBox x:Name="AutoScrollSoulmaskLog" Content="自动滚动" IsChecked="True" Margin="10,0,0,0"/>
                         </StackPanel>
 
-                        <RichTextBox x:Name="SoulmaskLogTextBox" 
-                                     Grid.Row="1"
-                                     Background="Transparent" 
-                                     IsReadOnly="True"
-                                     VerticalScrollBarVisibility="Auto"
-                                     HorizontalScrollBarVisibility="Auto"
-                                     Margin="5"
-                                     FontSize="12"
-                                     FontWeight="Black"/>
+                        <Grid Grid.Row="1">
+                            <RichTextBox x:Name="SoulmaskLogTextBox"
+                                         Background="Transparent"
+                                         IsReadOnly="True"
+                                         VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Auto"
+                                         Margin="5"
+                                         FontSize="12"
+                                         FontWeight="Black"/>
+                            <TextBlock x:Name="ServerLogStatusTextBlock"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Foreground="Gray"
+                                       FontSize="16"
+                                       TextWrapping="Wrap"
+                                       TextAlignment="Center"
+                                       Margin="24"
+                                       IsHitTestVisible="False"
+                                       Visibility="Collapsed"/>
+                        </Grid>
                     </Grid>
                 </TabItem>
 

@@ -122,7 +122,7 @@
         </Grid>
 
         <TextBlock Grid.Row="2" x:Name="StatusTextBlock" Margin="0,0,0,10"
-                   Text="请选择源数据库；目标默认为当前服务器的 WS\Saved\Accounts\account.db。"
+                   Text="请选择源数据库；目标路径按当前服务器保存的默认路径读取。"
                    TextWrapping="Wrap" Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
 
         <DockPanel Grid.Row="3">

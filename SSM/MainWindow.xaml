@@ -651,15 +651,25 @@
                 <Button Grid.Column="2" Content="问题反馈" Click="ReportIssue_Click" Height="30"/>
             </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Grid HorizontalAlignment="Center" Height="25" Width="600">
+                <Grid HorizontalAlignment="Center" Height="25" Width="620">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="55"/>
+                    </Grid.ColumnDefinitions>
                     <ProgressBar x:Name="InstallationProgressBar" 
+                                 Grid.Column="0"
                                  Height="10" 
                                  Minimum="0" 
                                  Maximum="100" 
                                  Value="0" 
-                                 Margin="10"
+                                 Margin="10,0,5,0"
                                  Visibility="Collapsed"
                                  IsIndeterminate="False"/>
+                    <TextBlock x:Name="InstallationProgressText"
+                               Grid.Column="1"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Visibility="Collapsed"/>
                 </Grid>
             </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right">

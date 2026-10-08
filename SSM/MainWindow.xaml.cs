@@ -66,6 +66,12 @@ public partial class MainWindow : Window
     private bool _pendingForceLogReload;
     private long _logRequestVersion;
 
+    private readonly SemaphoreSlim _serverUpdateSemaphore = new(1, 1);
+    private Server? _serverBeingUpdated;
+    private static readonly Regex SteamCmdProgressRegex = new(
+        @"progress:\s*(?<percentage>\d+(?:\.\d+)?)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     // 当前选中的服务器
     private Server _currentServer;
 
@@ -79,8 +85,6 @@ public partial class MainWindow : Window
     /// </summary>
     public MainWindow()
     {
-        // 启用 TLS 1.2 以确保 HTTPS 连接稳定
-        System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
         Process currentProcess = Process.GetCurrentProcess();
         Process[] processes = Process.GetProcessesByName(currentProcess.ProcessName);
 
@@ -1649,10 +1653,40 @@ public partial class MainWindow : Window
     /// <returns>异步操作是否成功。</returns>
     private async Task<bool> UpdateGame(Server server)
     {
+        // 自动更新等内部流程也经过这里，避免多个服务器同时启动 SteamCMD。
+        await _serverUpdateSemaphore.WaitAsync();
+        _serverBeingUpdated = server;
+
+        try
+        {
+            return await UpdateGameCore(server);
+        }
+        finally
+        {
+            _serverBeingUpdated = null;
+            _serverUpdateSemaphore.Release();
+            Dispatcher.Invoke(() =>
+            {
+                InstallationProgressBar.IsIndeterminate = false;
+                InstallationProgressBar.Value = 0;
+                InstallationProgressBar.Visibility = Visibility.Collapsed;
+                InstallationProgressText.Text = string.Empty;
+                InstallationProgressText.Visibility = Visibility.Collapsed;
+            });
+        }
+    }
+
+    /// <summary>
+    /// 执行单个服务器的 SteamCMD 更新流程。
+    /// </summary>
+    /// <param name="server">要处理的服务器实例。</param>
+    /// <returns>异步操作是否成功。</returns>
+    private async Task<bool> UpdateGameCore(Server server)
+    {
         if (server.Runtime.State == ServerRuntime.ServerState.更新中)
         {
             ShowLogWarning($"服务器 {server.ssmServerName} 正在更新中，尝试终止现有SteamCMD进程...");
-            KillCurrentServerSteamcmd();
+            KillServerSteamcmd(server);
             server.Runtime.State = ServerRuntime.ServerState.已停止;
             return false;
         }
@@ -1667,7 +1701,10 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() =>
         {
             InstallationProgressBar.IsIndeterminate = true;
+            InstallationProgressBar.Value = 0;
             InstallationProgressBar.Visibility = Visibility.Visible;
+            InstallationProgressText.Text = "准备中";
+            InstallationProgressText.Visibility = Visibility.Visible;
         });
 
         if (!Directory.Exists(server.Path))
@@ -1737,97 +1774,78 @@ public partial class MainWindow : Window
 
         string parameters = $@"+runscript ""{scriptPath}""";
 
-        bool hasError = false;
+        int hasError = 0;
         CancellationTokenSource cts = new CancellationTokenSource(); // 用于取消读取
 
         try
         {
-            if (!SsmSettings.AppSettings.ShowSteamWindow)
+            steamcmd = new Process
             {
-                steamcmd = new Process
+                StartInfo = new ProcessStartInfo
                 {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = steamCmdPath,
-                        Arguments = parameters,
-                        CreateNoWindow = true,
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        WorkingDirectory = server.Path,
-                        StandardOutputEncoding = Encoding.UTF8,
-                        StandardErrorEncoding = Encoding.UTF8
-                    }
-                };
+                    FileName = steamCmdPath,
+                    Arguments = parameters,
+                    CreateNoWindow = !SsmSettings.AppSettings.ShowSteamWindow,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    WorkingDirectory = server.Path,
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8
+                }
+            };
 
-                steamcmd.Start();
-                server.Runtime.Process = steamcmd;
-                steamcmd.OutputDataReceived += (sender, e) =>
+            steamcmd.Start();
+            server.Runtime.Process = steamcmd;
+            steamcmd.OutputDataReceived += (sender, e) =>
+            {
+                if (Volatile.Read(ref hasError) != 0)
+                    return;
+
+                if (!string.IsNullOrEmpty(e.Data))
                 {
-                    if (hasError)
+                    Match progressMatch = SteamCmdProgressRegex.Match(e.Data);
+                    if (progressMatch.Success && double.TryParse(
+                            progressMatch.Groups["percentage"].Value,
+                            System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out double percentage))
+                    {
+                        UpdateInstallationProgress(percentage);
+                    }
+
+                    if (e.Data.Contains("默认文件夹"))
+                    {
+                        ShowLogError("错误：路径包含中文，请不要在带有中文的目录中使用！");
+                        Interlocked.Exchange(ref hasError, 1);
+                        KillServerSteamcmd(server);
                         return;
-
-                    if (!string.IsNullOrEmpty(e.Data))
-                    {
-                        if (e.Data.Contains("默认文件夹"))
-                        {
-                            ShowLogError("错误：路径包含中文，请不要在带有中文的目录中使用！");
-                            hasError = true;
-                            KillCurrentServerSteamcmd();
-                            return;
-                        }
-
-                        if (e.Data.Contains("FAILED (No Connection)"))
-                        {
-                            ShowLogError("错误：服务器更新失败，请检查你的网络连接！");
-                            hasError = true;
-                            KillCurrentServerSteamcmd();
-                            return;
-                        }
                     }
-                };
 
-                steamcmd.BeginOutputReadLine();
-                steamcmd.BeginErrorReadLine();
-                await steamcmd.WaitForExitAsync();
+                    if (e.Data.Contains("FAILED (No Connection)"))
+                    {
+                        ShowLogError("错误：服务器更新失败，请检查你的网络连接！");
+                        Interlocked.Exchange(ref hasError, 1);
+                        KillServerSteamcmd(server);
+                        return;
+                    }
+                }
+            };
 
-                if (hasError || steamcmd.ExitCode != 0)
-                {
-                    ShowLogError($"{action}失败（ExitCode: {steamcmd.ExitCode}）");
-                    server.Runtime.State = ServerRuntime.ServerState.已停止;
-                    return false;
-                }
-                else
-                {
-                    server.Runtime.State = ServerRuntime.ServerState.已停止;
-                    return true;
-                }
+            steamcmd.BeginOutputReadLine();
+            steamcmd.BeginErrorReadLine();
+            await steamcmd.WaitForExitAsync();
+
+            if (Volatile.Read(ref hasError) != 0 || steamcmd.ExitCode != 0)
+            {
+                ShowLogError($"{action}失败（ExitCode: {steamcmd.ExitCode}）");
+                server.Runtime.State = ServerRuntime.ServerState.已停止;
+                return false;
             }
             else
             {
-                steamcmd = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = steamCmdPath,
-                        Arguments = parameters,
-                        CreateNoWindow = false
-                    }
-                };
-                steamcmd.Start();
-                server.Runtime.Process = steamcmd;
-                await steamcmd.WaitForExitAsync();
-
-                if (steamcmd.ExitCode != 0)
-                {
-                    server.Runtime.State = ServerRuntime.ServerState.已停止;
-                    return false;
-                }
-                else
-                {
-                    server.Runtime.State = ServerRuntime.ServerState.已停止;
-                    return true;
-                }
+                server.Runtime.State = ServerRuntime.ServerState.已停止;
+                return true;
             }
         }
         catch (Exception ex)
@@ -1842,6 +1860,7 @@ public partial class MainWindow : Window
             {
                 InstallationProgressBar.IsIndeterminate = false;
                 InstallationProgressBar.Visibility = Visibility.Collapsed;
+                InstallationProgressText.Visibility = Visibility.Collapsed;
             });
             steamcmd?.Dispose();
             server.Runtime.Process = null;
@@ -1856,22 +1875,22 @@ public partial class MainWindow : Window
         }
     }
     /// <summary>
-    /// 终止当前正在执行的 SteamCMD 更新进程。
+    /// 终止指定服务器正在执行的 SteamCMD 更新进程。
     /// </summary>
-    private void KillCurrentServerSteamcmd()
+    /// <param name="server">要终止更新的服务器。</param>
+    private void KillServerSteamcmd(Server server)
     {
-        if (_currentServer == null) return;
 
         try
         {
-            var process = _currentServer.Runtime.Process;
+            var process = server.Runtime.Process;
             if (process != null && !process.HasExited)
             {
                 process.Kill();
                 process.WaitForExit(1000);
                 process.Dispose();
-                _currentServer.Runtime.Process = null;
-                ShowLogError($"已终止当前服务器的更新");
+                server.Runtime.Process = null;
+                ShowLogError($"已终止服务器 {server.ssmServerName} 的更新");
             }
         }
         catch (Exception ex)
@@ -2845,7 +2864,20 @@ public partial class MainWindow : Window
             if (server.Runtime.State == ServerRuntime.ServerState.更新中)
             {
                 ShowLogWarning($"正在取消服务器 {server.ssmServerName} 的更新...");
-                KillCurrentServerSteamcmd();
+                KillServerSteamcmd(server);
+                server.Runtime.State = ServerRuntime.ServerState.已停止;
+                return;
+            }
+
+            if (_serverBeingUpdated is Server activeServer)
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = "服务器正在更新",
+                    Content = $"服务器“{activeServer.ssmServerName}”正在更新或下载，请等待任务完成后再更新其他服务器。",
+                    CloseButtonText = "确定"
+                };
+                await dialog.ShowAsync();
                 return;
             }
 
@@ -3188,6 +3220,24 @@ public partial class MainWindow : Window
                 newEditor.Show();
             }
         }
+    }
+
+    /// <summary>
+    /// 更新主窗口底部的服务器下载进度和百分比。
+    /// </summary>
+    /// <param name="percentage">SteamCMD 输出的下载百分比。</param>
+    private void UpdateInstallationProgress(double percentage)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.InvokeAsync(() => UpdateInstallationProgress(percentage));
+            return;
+        }
+
+        percentage = Math.Clamp(percentage, 0, 100);
+        InstallationProgressBar.IsIndeterminate = false;
+        InstallationProgressBar.Value = percentage;
+        InstallationProgressText.Text = $"{percentage:0.0}%";
     }
 
     #endregion ConfigurationEditorButtons

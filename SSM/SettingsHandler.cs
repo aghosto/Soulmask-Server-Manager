@@ -3790,18 +3790,6 @@ namespace SoulmaskServerManager
         public string Password { get; set; } = "";
     }
 
-    public class API
-    {
-        public bool Enabled { get; set; } = false;
-        public int BindPort { get; set; } = 18888;
-    }
-
-    public class PresetItem
-    {
-        public string DisplayName { get; set; }
-        public string FileName { get; set; }
-    }
-
     public class ServerSettings
     {
         public string SteamServerName { get; set; } = "My Soulmask Server";
@@ -3811,7 +3799,6 @@ namespace SoulmaskServerManager
         public int MaxPlayers { get; set; } = 40;
         public string Password { get; set; } = "";
         public string GMPassword { get; set; } = "";
-        //public bool PVP { get; set; } = false;
         public int Backup { get; set; } = 900;
         public int Saving { get; set; } = 600;
         public string Map { get; set; } = "Level01_Main";
@@ -3827,7 +3814,6 @@ namespace SoulmaskServerManager
         public int ServerId { get; set; } = 0;
         public string SelfServerUniqueId { get; set; } = "";
         public string MainServerUniqueId { get; set; } = "";
-        public string ServerPresetSettings { get; set; } = "无";
         public string Mods { get; set; } = "";
         public Rcon Rcon { get; set; } = new Rcon();
     }

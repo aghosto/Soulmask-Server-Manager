@@ -32,6 +32,8 @@ namespace SoulmaskServerManager
         private readonly ObservableCollection<Server> servers;
         private MainSettings mainSettings;
         private int _loadedServerIndex = -1;
+        private bool _connectionPortEdited;
+        private bool _serverIdEdited;
 
         public class ServerListItem
         {
@@ -41,140 +43,6 @@ namespace SoulmaskServerManager
             public string DisplayText => $"{Server.ssmServerName}  端口：{Port}";
         }
 
-        private readonly List<PresetItem> _presetItems = new List<PresetItem>
-        {
-            new PresetItem{ DisplayName="无", FileName="None"},
-            new PresetItem{ DisplayName="GameXishuConfig_Template", FileName="GameXishuConfig_Template.json"},
-            new PresetItem{ DisplayName="GameXishuConfig_Template_Action", FileName="GameXishuConfig_Template_Action.json"},
-            new PresetItem{ DisplayName="GameXishuConfig_Template_Management", FileName="GameXishuConfig_Template_Management.json"},
-            new PresetItem{ DisplayName="GameXishuConfig_Template_PVP", FileName="GameXishuConfig_Template_PVP.json"},
-            new PresetItem{ DisplayName="GameXishu_Template", FileName="GameXishu_Template.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Action", FileName="GameXishu_Template_Action.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Action_Custom", FileName="GameXishu_Template_Action_Custom.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Action_Dashi", FileName="GameXishu_Template_Action_Dashi.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Action_Jiandan", FileName="GameXishu_Template_Action_Jiandan.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Action_Kunnan", FileName="GameXishu_Template_Action_Kunnan.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Action_Putong", FileName="GameXishu_Template_Action_Putong.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Action_Xiuxian", FileName="GameXishu_Template_Action_Xiuxian.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Custom", FileName="GameXishu_Template_Custom.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Dashi", FileName="GameXishu_Template_Dashi.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Jiandan", FileName="GameXishu_Template_Jiandan.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Kunnan", FileName="GameXishu_Template_Kunnan.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Management", FileName="GameXishu_Template_Management.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Management_Custom", FileName="GameXishu_Template_Management_Custom.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Management_Dashi", FileName="GameXishu_Template_Management_Dashi.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Management_Jiandan", FileName="GameXishu_Template_Management_Jiandan.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Management_Kunnan", FileName="GameXishu_Template_Management_Kunnan.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Management_Putong", FileName="GameXishu_Template_Management_Putong.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Management_Xiuxian", FileName="GameXishu_Template_Management_Xiuxian.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Putong", FileName="GameXishu_Template_Putong.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE", FileName="GameXishu_Template_PvE.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_04P", FileName="GameXishu_Template_PvE_04P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_04P_3x", FileName="GameXishu_Template_PvE_04P_3x.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_04P_Hardcore", FileName="GameXishu_Template_PvE_04P_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_10P", FileName="GameXishu_Template_PvE_10P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_10P_3x", FileName="GameXishu_Template_PvE_10P_3x.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_10P_Hardcore", FileName="GameXishu_Template_PvE_10P_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_20P_3x", FileName="GameXishu_Template_PvE_20P_3x.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_20P_5x", FileName="GameXishu_Template_PvE_20P_5x.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_20P_merge", FileName="GameXishu_Template_PvE_20P_merge.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_AS_04P_Hardcore", FileName="GameXishu_Template_PvE_AS_04P_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_AS_06P", FileName="GameXishu_Template_PvE_AS_06P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_AS_20P", FileName="GameXishu_Template_PvE_AS_20P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_EU_04P_Hardcore", FileName="GameXishu_Template_PvE_EU_04P_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_EU_06P", FileName="GameXishu_Template_PvE_EU_06P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_EU_20P", FileName="GameXishu_Template_PvE_EU_20P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_NA_04P_Hardcore", FileName="GameXishu_Template_PvE_NA_04P_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_NA_06P", FileName="GameXishu_Template_PvE_NA_06P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_NA_20P", FileName="GameXishu_Template_PvE_NA_20P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_OA_03P", FileName="GameXishu_Template_PvE_OA_03P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_OA_04P", FileName="GameXishu_Template_PvE_OA_04P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_OA_06P", FileName="GameXishu_Template_PvE_OA_06P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_OA_20P", FileName="GameXishu_Template_PvE_OA_20P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_SA_03P", FileName="GameXishu_Template_PvE_SA_03P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_SA_04P", FileName="GameXishu_Template_PvE_SA_04P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_SA_06P", FileName="GameXishu_Template_PvE_SA_06P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvE_SA_20P", FileName="GameXishu_Template_PvE_SA_20P.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PVP", FileName="GameXishu_Template_PVP.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_04P_No_Raid", FileName="GameXishu_Template_PvP_04P_No_Raid.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_04P_No_Raid_3x", FileName="GameXishu_Template_PvP_04P_No_Raid_3x.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_10P_No_Raid", FileName="GameXishu_Template_PvP_10P_No_Raid.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_10P_No_Raid_3x", FileName="GameXishu_Template_PvP_10P_No_Raid_3x.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_03P_UTC12~16", FileName="GameXishu_Template_PvP_AS_03P_UTC12~16.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_04P_UTC11~15_1M", FileName="GameXishu_Template_PvP_AS_04P_UTC11~15_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_04P_UTC11~15_1M_Hardcore", FileName="GameXishu_Template_PvP_AS_04P_UTC11~15_1M_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_04P_UTC11~15_1M_Weekend", FileName="GameXishu_Template_PvP_AS_04P_UTC11~15_1M_Weekend.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_04P_UTC12~14_3M", FileName="GameXishu_Template_PvP_AS_04P_UTC12~14_3M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_04P_UTC12~14_LongTerm", FileName="GameXishu_Template_PvP_AS_04P_UTC12~14_LongTerm.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_04P_UTC12~15_1M", FileName="GameXishu_Template_PvP_AS_04P_UTC12~15_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_06P_UTC12~16", FileName="GameXishu_Template_PvP_AS_06P_UTC12~16.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_10P_UTC11~15_1M", FileName="GameXishu_Template_PvP_AS_10P_UTC11~15_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_10P_UTC11~15_1M_Hardcore", FileName="GameXishu_Template_PvP_AS_10P_UTC11~15_1M_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_10P_UTC11~15_1M_Weekend", FileName="GameXishu_Template_PvP_AS_10P_UTC11~15_1M_Weekend.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_10P_UTC12~14_3M", FileName="GameXishu_Template_PvP_AS_10P_UTC12~14_3M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_10P_UTC12~15_1M", FileName="GameXishu_Template_PvP_AS_10P_UTC12~15_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_20P_UTC05~17", FileName="GameXishu_Template_PvP_AS_20P_UTC05~17.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_20P_UTC09~17", FileName="GameXishu_Template_PvP_AS_20P_UTC09~17.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_AS_20P_UTC12~16", FileName="GameXishu_Template_PvP_AS_20P_UTC12~16.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_BattleField", FileName="GameXishu_Template_PvP_BattleField.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PVP_Custom", FileName="GameXishu_Template_PVP_Custom.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PVP_Dashi", FileName="GameXishu_Template_PVP_Dashi.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_03P_UTC19~23", FileName="GameXishu_Template_PvP_EU_03P_UTC19~23.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_04P_UTC18~22_1M", FileName="GameXishu_Template_PvP_EU_04P_UTC18~22_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_04P_UTC18~22_1M_Hardcore", FileName="GameXishu_Template_PvP_EU_04P_UTC18~22_1M_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_04P_UTC18~22_1M_Weekend", FileName="GameXishu_Template_PvP_EU_04P_UTC18~22_1M_Weekend.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_04P_UTC19~21_3M", FileName="GameXishu_Template_PvP_EU_04P_UTC19~21_3M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_04P_UTC19~21_LongTerm", FileName="GameXishu_Template_PvP_EU_04P_UTC19~21_LongTerm.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_04P_UTC19~22_1M", FileName="GameXishu_Template_PvP_EU_04P_UTC19~22_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_06P_UTC19~23", FileName="GameXishu_Template_PvP_EU_06P_UTC19~23.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_10P_UTC18~22_1M", FileName="GameXishu_Template_PvP_EU_10P_UTC18~22_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_10P_UTC18~22_1M_Hardcore", FileName="GameXishu_Template_PvP_EU_10P_UTC18~22_1M_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_10P_UTC18~22_1M_Weekend", FileName="GameXishu_Template_PvP_EU_10P_UTC18~22_1M_Weekend.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_10P_UTC19~21_3M", FileName="GameXishu_Template_PvP_EU_10P_UTC19~21_3M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_10P_UTC19~22_1M", FileName="GameXishu_Template_PvP_EU_10P_UTC19~22_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_20P_UTC12~24", FileName="GameXishu_Template_PvP_EU_20P_UTC12~24.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_EU_20P_UTC16~24", FileName="GameXishu_Template_PvP_EU_20P_UTC16~24.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PVP_Jiandan", FileName="GameXishu_Template_PVP_Jiandan.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PVP_Kunnan", FileName="GameXishu_Template_PVP_Kunnan.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_03P_UTC01~05", FileName="GameXishu_Template_PvP_NA_03P_UTC01~05.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_04P_UTC01~05_1M", FileName="GameXishu_Template_PvP_NA_04P_UTC01~05_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_04P_UTC01~05_1M_Hardcore", FileName="GameXishu_Template_PvP_NA_04P_UTC01~05_1M_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_04P_UTC01~05_1M_Weekend", FileName="GameXishu_Template_PvP_NA_04P_UTC01~05_1M_Weekend.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_04P_UTC02~04_3M", FileName="GameXishu_Template_PvP_NA_04P_UTC02~04_3M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_04P_UTC02~04_LongTerm", FileName="GameXishu_Template_PvP_NA_04P_UTC02~04_LongTerm.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_04P_UTC02~05_1M", FileName="GameXishu_Template_PvP_NA_04P_UTC02~05_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_06P_UTC01~05", FileName="GameXishu_Template_PvP_NA_06P_UTC01~05.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_10P_UTC01~05_1M", FileName="GameXishu_Template_PvP_NA_10P_UTC01~05_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_10P_UTC01~05_1M_Hardcore", FileName="GameXishu_Template_PvP_NA_10P_UTC01~05_1M_Hardcore.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_10P_UTC01~05_1M_Weekend", FileName="GameXishu_Template_PvP_NA_10P_UTC01~05_1M_Weekend.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_10P_UTC02~04_3M", FileName="GameXishu_Template_PvP_NA_10P_UTC02~04_3M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_10P_UTC02~05_1M", FileName="GameXishu_Template_PvP_NA_10P_UTC02~05_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_20P_UTC18~06", FileName="GameXishu_Template_PvP_NA_20P_UTC18~06.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_NA_20P_UTC22~06", FileName="GameXishu_Template_PvP_NA_20P_UTC22~06.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_OA", FileName="GameXishu_Template_PvP_OA.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_OA_03P_UTC08~12", FileName="GameXishu_Template_PvP_OA_03P_UTC08~12.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_OA_04P_UTC08~12_1M", FileName="GameXishu_Template_PvP_OA_04P_UTC08~12_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_OA_04P_UTC09~11_3M", FileName="GameXishu_Template_PvP_OA_04P_UTC09~11_3M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_OA_04P_UTC09~12_1M", FileName="GameXishu_Template_PvP_OA_04P_UTC09~12_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_OA_10P_UTC08~12_1M", FileName="GameXishu_Template_PvP_OA_10P_UTC08~12_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_OA_10P_UTC09~11_3M", FileName="GameXishu_Template_PvP_OA_10P_UTC09~11_3M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_OA_10P_UTC09~12_1M", FileName="GameXishu_Template_PvP_OA_10P_UTC09~12_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_OA_20P_UTC08~12", FileName="GameXishu_Template_PvP_OA_20P_UTC08~12.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PVP_Putong", FileName="GameXishu_Template_PVP_Putong.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_SA", FileName="GameXishu_Template_PvP_SA.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_SA_03P_UTC23~03", FileName="GameXishu_Template_PvP_SA_03P_UTC23~03.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_SA_04P_UTC23~03_1M", FileName="GameXishu_Template_PvP_SA_04P_UTC23~03_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_SA_04P_UTC24~02_3M", FileName="GameXishu_Template_PvP_SA_04P_UTC24~02_3M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_SA_04P_UTC24~03_1M", FileName="GameXishu_Template_PvP_SA_04P_UTC24~03_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_SA_06P_UTC23~03", FileName="GameXishu_Template_PvP_SA_06P_UTC23~03.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_SA_10P_UTC23~03_1M", FileName="GameXishu_Template_PvP_SA_10P_UTC23~03_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_SA_10P_UTC24~02_3M", FileName="GameXishu_Template_PvP_SA_10P_UTC24~02_3M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_SA_10P_UTC24~03_1M", FileName="GameXishu_Template_PvP_SA_10P_UTC24~03_1M.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PvP_SA_20P_UTC23~03", FileName="GameXishu_Template_PvP_SA_20P_UTC23~03.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_PVP_Xiuxian", FileName="GameXishu_Template_PVP_Xiuxian.json"},
-            new PresetItem{ DisplayName="GameXishu_Template_Xiuxian", FileName="GameXishu_Template_Xiuxian.json"},
-        };
-
         public ServerSettingsEditor(ObservableCollection<Server> sentServers, bool autoLoad = false, int indexToLoad = -1)
         {
             servers = sentServers;
@@ -183,6 +51,15 @@ namespace SoulmaskServerManager
 
             InitializeComponent();
             //ExportFilesToCsv(Path.Combine(servers[indexToLoad].Path, "WS", "Config", "GameplaySettings"), false, Path.Combine(Directory.GetCurrentDirectory(), "Output.csv"));
+
+            CurrentServerComboBox.ItemsSource = servers;
+            if (servers.Count > 0)
+            {
+                int selectedIndex = indexToLoad >= 0 && indexToLoad < servers.Count ? indexToLoad : 0;
+                CurrentServerComboBox.SelectedItem = servers[selectedIndex];
+            }
+            CurrentServerComboBox.SelectionChanged += CurrentServerComboBox_SelectionChanged;
+            UpdateServerIdConflictWarning();
 
             if (autoLoad && indexToLoad != -1 && servers.Count > 0)
             {
@@ -380,6 +257,10 @@ namespace SoulmaskServerManager
 
         private async void InitializeEditorUI()
         {
+            MainServerListBox.IsEnabled = ClusterModeComboBox.SelectedIndex == 2;
+            UpdateServerIdConflictWarning();
+            UpdateConnectionPortConflictWarning();
+
             if (serverSettings.Map == "Level01_Main")
                 MapSelectComboBox.SelectedIndex = 0;
             else
@@ -426,9 +307,6 @@ namespace SoulmaskServerManager
                     MainServerPortTextBox.Text = "";
                 }
             }
-
-            ServerSettingsPresetComboBox.ItemsSource = _presetItems;
-            ServerSettingsPresetComboBox.SelectedItem = _presetItems.FirstOrDefault(p => p.FileName == serverSettings.ServerPresetSettings);
 
             RefreshMainServerList();
 
@@ -542,22 +420,22 @@ namespace SoulmaskServerManager
             {
                 string json = SerializeCurrentState();
                 File.WriteAllText(dialog.FileName, json);
-                _ = new ModernWpf.Controls.ContentDialog
+                _ = new ContentDialog
                 {
                     Title = "导出成功",
                     Content = $"配置已导出至：\n{dialog.FileName}",
                     CloseButtonText = "确定",
-                    DefaultButton = ModernWpf.Controls.ContentDialogButton.Close
+                    DefaultButton = ContentDialogButton.Close
                 }.ShowAsync();
             }
             catch (Exception ex)
             {
-                _ = new ModernWpf.Controls.ContentDialog
+                _ = new ContentDialog
                 {
                     Title = "错误",
                     Content = $"导出失败：{ex.Message}",
                     CloseButtonText = "确定",
-                    DefaultButton = ModernWpf.Controls.ContentDialogButton.Close
+                    DefaultButton = ContentDialogButton.Close
                 }.ShowAsync();
             }
         }
@@ -586,9 +464,10 @@ namespace SoulmaskServerManager
 
                 if (await yesNoDialog.ShowAsync() is ContentDialogResult.Primary)
                 {
-                    Server? currentServer = _loadedServerIndex >= 0 && _loadedServerIndex < servers.Count
-                        ? servers[_loadedServerIndex]
-                        : servers.FirstOrDefault(server => server.UniqueId == serverSettings.SelfServerUniqueId);
+                    Server? currentServer = CurrentServerComboBox.SelectedItem as Server ??
+                        (_loadedServerIndex >= 0 && _loadedServerIndex < servers.Count
+                            ? servers[_loadedServerIndex]
+                            : servers.FirstOrDefault(server => server.UniqueId == serverSettings.SelfServerUniqueId));
                     EditorSaveDialog dialog = new(servers, currentServer)
                     {
                         PrimaryButtonText = "保存",
@@ -649,16 +528,8 @@ namespace SoulmaskServerManager
                         else
                             serverSettings.Map = "DLC_Level01_Main";
 
-                        if (ServerSettingsPresetComboBox.SelectedItem is PresetItem selectedPreset)
-                        {
-                            serverSettings.ServerPresetSettings = selectedPreset.FileName;
-                        }
-                        else
-                        {
-                            serverSettings.ServerPresetSettings = string.Empty;
-                        }
-
                         SaveServerSettings(server, serverSettings);
+                        server.ConnectionPort = serverSettings.Port;
                         RefreshMainServerList();
 
                         var closeFileDialog = new ContentDialog()
@@ -705,9 +576,16 @@ namespace SoulmaskServerManager
         private void RefreshMainServerList()
         {
             MainServerListBox.Items.Clear();
+            Server? currentServer = CurrentServerComboBox.SelectedItem as Server ??
+                (_loadedServerIndex >= 0 && _loadedServerIndex < servers.Count
+                    ? servers[_loadedServerIndex]
+                    : servers.FirstOrDefault(server => server.UniqueId == serverSettings.SelfServerUniqueId));
 
             foreach (var server in servers)
             {
+                if (currentServer != null && server.UniqueId == currentServer.UniqueId)
+                    continue;
+
                 try
                 {
                     string serverSettingsPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
@@ -746,6 +624,175 @@ namespace SoulmaskServerManager
                     continue;
                 }
             }
+        }
+
+        private void CurrentServerComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (CurrentServerComboBox.SelectedItem is Server selectedServer)
+            {
+                _connectionPortEdited = false;
+                _serverIdEdited = false;
+                int selectedIndex = servers.IndexOf(selectedServer);
+                if (selectedIndex >= 0 && selectedIndex != _loadedServerIndex)
+                    CheckAndLoadSettingsFile(selectedIndex);
+            }
+        }
+
+        private void UpdateServerIdConflictWarning()
+        {
+            if (serverSettings == null || ServerIdConflictTextBlock == null)
+                return;
+
+            int serverId = serverSettings.ServerId;
+            if (_loadedServerIndex < 0 && !_serverIdEdited && CurrentServerComboBox.SelectedItem is Server selectedServer)
+            {
+                string currentSettingsPath = Path.Combine(selectedServer.Path, "SaveData", "Settings", "ServerSettings.json");
+                if (File.Exists(currentSettingsPath))
+                {
+                    try
+                    {
+                        serverId = System.Text.Json.JsonSerializer.Deserialize<ServerSettings>(File.ReadAllText(currentSettingsPath))?.ServerId ?? serverId;
+                    }
+                    catch
+                    {
+                        // 当前配置不可读取时，使用编辑器中的值进行检查。
+                    }
+                }
+            }
+
+            if (serverId <= 0)
+            {
+                ServerIdConflictTextBlock.Visibility = Visibility.Collapsed;
+                ServerIdConflictTextBlock.Text = string.Empty;
+                return;
+            }
+
+            Server? currentServer = CurrentServerComboBox.SelectedItem as Server;
+            var conflictingServers = new List<string>();
+
+            foreach (Server? server in servers)
+            {
+                if (server == null || string.IsNullOrWhiteSpace(server.Path))
+                    continue;
+
+                if (currentServer != null && server.UniqueId == currentServer.UniqueId)
+                    continue;
+
+                string settingsPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
+                if (!File.Exists(settingsPath))
+                    continue;
+
+                try
+                {
+                    ServerSettings? otherSettings = System.Text.Json.JsonSerializer.Deserialize<ServerSettings>(File.ReadAllText(settingsPath));
+                    if (otherSettings?.ServerId == serverId)
+                        conflictingServers.Add(string.IsNullOrWhiteSpace(server.ssmServerName)
+                            ? Path.GetFileName(server.Path)
+                            : server.ssmServerName);
+                }
+                catch
+                {
+                    // 忽略无法读取的其他服务器配置，继续检查其余服务器。
+                }
+            }
+
+            if (conflictingServers.Count == 0)
+            {
+                ServerIdConflictTextBlock.Visibility = Visibility.Collapsed;
+                ServerIdConflictTextBlock.Text = string.Empty;
+                return;
+            }
+
+            ServerIdConflictTextBlock.Text = $"服务器ID {serverId} 与以下服务器重复：{string.Join("、", conflictingServers.Distinct())}";
+            ServerIdConflictTextBlock.Visibility = Visibility.Visible;
+        }
+
+        private void ServerIdNumberBox_ValueChanged(ModernWpf.Controls.NumberBox sender, ModernWpf.Controls.NumberBoxValueChangedEventArgs args)
+        {
+            if (IsLoaded)
+                _serverIdEdited = true;
+            UpdateServerIdConflictWarning();
+        }
+
+        private void ConnectionPortNumberBox_ValueChanged(ModernWpf.Controls.NumberBox sender, ModernWpf.Controls.NumberBoxValueChangedEventArgs args)
+        {
+            if (IsLoaded)
+                _connectionPortEdited = true;
+            UpdateConnectionPortConflictWarning();
+        }
+
+        private void UpdateConnectionPortConflictWarning()
+        {
+            if (serverSettings == null || ConnectionPortConflictTextBlock == null)
+                return;
+
+            int port = serverSettings.Port;
+            Server? currentServer = CurrentServerComboBox.SelectedItem as Server;
+            if (_loadedServerIndex < 0 && !_connectionPortEdited && currentServer != null)
+            {
+                string currentSettingsPath = Path.Combine(currentServer.Path, "SaveData", "Settings", "ServerSettings.json");
+                if (File.Exists(currentSettingsPath))
+                {
+                    try
+                    {
+                        port = System.Text.Json.JsonSerializer.Deserialize<ServerSettings>(File.ReadAllText(currentSettingsPath))?.Port ?? port;
+                    }
+                    catch
+                    {
+                        // 当前配置不可读取时，使用编辑器中的值进行检查。
+                    }
+                }
+            }
+
+            if (port <= 0)
+            {
+                ConnectionPortConflictTextBlock.Visibility = Visibility.Collapsed;
+                ConnectionPortConflictTextBlock.Text = string.Empty;
+                return;
+            }
+
+            var conflictingServers = new List<string>();
+            foreach (Server? server in servers)
+            {
+                if (server == null || string.IsNullOrWhiteSpace(server.Path))
+                    continue;
+
+                if (currentServer != null && server.UniqueId == currentServer.UniqueId)
+                    continue;
+
+                string settingsPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
+                if (!File.Exists(settingsPath))
+                    continue;
+
+                try
+                {
+                    ServerSettings? otherSettings = System.Text.Json.JsonSerializer.Deserialize<ServerSettings>(File.ReadAllText(settingsPath));
+                    if (otherSettings?.Port == port)
+                        conflictingServers.Add(string.IsNullOrWhiteSpace(server.ssmServerName)
+                            ? Path.GetFileName(server.Path)
+                            : server.ssmServerName);
+                }
+                catch
+                {
+                    // 忽略无法读取的其他服务器配置，继续检查其余服务器。
+                }
+            }
+
+            if (conflictingServers.Count == 0)
+            {
+                ConnectionPortConflictTextBlock.Visibility = Visibility.Collapsed;
+                ConnectionPortConflictTextBlock.Text = string.Empty;
+                return;
+            }
+
+            ConnectionPortConflictTextBlock.Text = $"连接端口 {port} 与以下服务器重复：{string.Join("、", conflictingServers.Distinct())}";
+            ConnectionPortConflictTextBlock.Visibility = Visibility.Visible;
+        }
+
+        private void ClusterModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (MainServerListBox != null)
+                MainServerListBox.IsEnabled = ClusterModeComboBox.SelectedIndex == 2;
         }
 
         private int GetMainServerPortByUniqueId(string uniqueId)

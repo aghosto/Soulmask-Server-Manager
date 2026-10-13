@@ -97,7 +97,7 @@ namespace SoulmaskServerManager
             if (!File.Exists(Path.Combine(newServerSettingsPath, "ServerSettings.json")))
                 ServerSettingsEditor.CreateDefaultSettingsFile(newServer);
 
-            string gameXishuPath = Path.Combine(newServerSettingsPath, "GameXishu_Default.json");
+            string gameXishuPath = Path.Combine(newServerSettingsPath, "GameXishu_Custom.json");
             if (!File.Exists(gameXishuPath))
             {
                 var defaultConfig = new SoulmaskCoefficientConfigCollection();

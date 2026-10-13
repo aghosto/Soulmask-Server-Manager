@@ -7,7 +7,7 @@
         xmlns:ui="http://schemas.modernwpf.com/2019" xmlns:local1="clr-namespace:SoulmaskServerManager.Controls"
         ui:WindowHelper.UseModernWindowStyle="True"
         mc:Ignorable="d"
-        Title="服务器端设置编辑器" Height="600" Width="750" MinHeight="550" MinWidth="600" ResizeMode="NoResize" Icon="Resources\icon_EditDocument.png">
+        Title="服务器端设置编辑器" Height="625" Width="750" MinHeight="550" MinWidth="600" ResizeMode="NoResize" Icon="Resources\icon_EditDocument.png">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -18,7 +18,7 @@
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
             <Button Click="FileMenuLoad_Click" Margin="2,0" ToolTip="从文件导入服务器连接配置">
                 <StackPanel Orientation="Horizontal">
-                    <ui:SymbolIcon Symbol="OpenFile" Margin="0,0,3,0"/>
+                    <ui:SymbolIcon Symbol="Download" Margin="0,0,3,0"/>
                     <TextBlock Text="导入"/>
                 </StackPanel>
             </Button>
@@ -30,7 +30,7 @@
             </Button>
             <Button Click="FileMenuExport_Click" Margin="2,0" ToolTip="导出当前服务器连接配置">
                 <StackPanel Orientation="Horizontal">
-                    <ui:SymbolIcon Symbol="Download" Margin="0,0,3,0"/>
+                    <ui:SymbolIcon Symbol="OpenFile" Margin="0,0,3,0"/>
                     <TextBlock Text="导出"/>
                 </StackPanel>
             </Button>
@@ -58,24 +58,19 @@
 
                 <StackPanel HorizontalAlignment="Stretch">
                     <DockPanel>
-                        <TextBlock Text="服务器设置预设" Height="20"/>
-                        <ComboBox x:Name="ServerSettingsPresetComboBox" Width="250" IsEnabled="False" HorizontalAlignment="Right">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding DisplayName}"/>
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
+                        <TextBlock Text="当前服务器" Height="20"/>
+                        <ComboBox x:Name="CurrentServerComboBox" Width="250" HorizontalAlignment="Right" DisplayMemberPath="ssmServerName"/>
                     </DockPanel>
 
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="服务器名称" Height="20"/>
-                        <TextBox Height="80" Text="{Binding SteamServerName, Mode=TwoWay}" IsEnabled="True"  HorizontalAlignment="Right" Width="250" TextWrapping="Wrap"/>
+                        <TextBox Height="65" Text="{Binding SteamServerName, Mode=TwoWay}" IsEnabled="True"  HorizontalAlignment="Right" Width="250" TextWrapping="Wrap"/>
                     </DockPanel>
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="连接端口" Height="20"/>
-                        <ui:NumberBox Value="{Binding Port, Mode=TwoWay}" Maximum="65535" Minimum="1" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="连接服务器时所需填写的端口"/>
+                        <ui:NumberBox Value="{Binding Port, Mode=TwoWay}" Maximum="65535" Minimum="1" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="连接服务器时所需填写的端口，同一管理器中的服务器不可重复" ValueChanged="ConnectionPortNumberBox_ValueChanged"/>
                     </DockPanel>
+                    <TextBlock x:Name="ConnectionPortConflictTextBlock" Foreground="Red" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" Visibility="Collapsed"/>
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="查询端口" Height="20"/>
                         <ui:NumberBox Value="{Binding QueryPort, Mode=TwoWay}" Maximum="65535" Minimum="1" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="Steam服务器的UDP端口列表功能。"/>
@@ -88,7 +83,7 @@
                         <TextBlock Text="地图选择" Height="20"/>
                         <ComboBox 
                                 x:Name="MapSelectComboBox" 
-                                Width="160"
+                                Width="250"
                                 OverridesDefaultStyle="True"
                                 HorizontalAlignment="Right">
                             <ComboBoxItem Content="云雾之森"/>
@@ -176,11 +171,13 @@
                     </DockPanel>
                     <DockPanel Margin="0,5,0,0">
                         <TextBlock Text="服务器ID" Height="20" />
-                        <ui:NumberBox Value="{Binding ServerId, Mode=TwoWay}" Minimum="0" Maximum="9999" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="服务器的ID，对应启动参数 -serverid，必须为正整数且同一电脑上的服务器不可重复"/>
+                        <ui:NumberBox Value="{Binding ServerId, Mode=TwoWay}" Minimum="0" Maximum="9999" HorizontalAlignment="Right" Width="250" SpinButtonPlacementMode="Inline" ToolTip="服务器的ID，对应启动参数 -serverid，必须为正整数且同一电脑上的服务器不可重复" ValueChanged="ServerIdNumberBox_ValueChanged"/>
                     </DockPanel>
+                    <TextBlock x:Name="ServerIdConflictTextBlock" Foreground="Red" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" Visibility="Collapsed"/>
                     <TextBlock Text="参与服务器集群" FontSize="15" Margin="0 8 0 0"/>
                     <ComboBox 
                             x:Name="ClusterModeComboBox"
+                            SelectionChanged="ClusterModeComboBox_SelectionChanged"
                             HorizontalAlignment="Stretch"
                             SelectedIndex="{Binding ClusterMode, Mode=TwoWay}">
                         <ComboBoxItem Content="独立服务器"   Tag="None" ToolTip="不参与服务器集群"/>
@@ -201,7 +198,7 @@
                             <TextBlock Text="（如需输入多个mod，需要用英文的逗号分开！）" FontSize="10" VerticalAlignment="Center"/>
                         </DockPanel>
                         <TextBlock Text="使用主界面的 MOD管理 功能体验会更佳！(可能需要使用watt++加速)" FontSize="10" VerticalAlignment="Center"/>
-                        <TextBox Height="70" Text="{Binding Mods, Mode=TwoWay}" HorizontalAlignment="Stretch" TextWrapping="Wrap"/>
+                        <TextBox Height="80" Text="{Binding Mods, Mode=TwoWay}" HorizontalAlignment="Stretch" TextWrapping="Wrap"/>
                     </StackPanel>
                 </StackPanel>
             </Grid>

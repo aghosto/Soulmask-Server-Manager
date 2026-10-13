@@ -46,9 +46,11 @@ public partial class MainWindow : Window
     private PeriodicTimer? AutoUpdateTimer;
     private RemoteConClient RCONClient = new();
     private DispatcherTimer _autoRestartTimer;
-    private bool _sentRestart10Min = false;
-    private bool _sentRestart5Min = false;
-    private bool _sentRestart1Min = false;
+    private DispatcherTimer? _scheduledRconMessageTimer;
+    private readonly Dictionary<string, (int IntervalMinutes, DateTime NextSendAt)> _scheduledRconMessages = new();
+    private bool _isSendingScheduledRconMessage;
+    private readonly Dictionary<string, ScheduledRestartState> _scheduledRestartStates = new();
+    private bool _isProcessingScheduledRestart;
     private DispatcherTimer _playerRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
 
     private string _activeLogType;
@@ -71,12 +73,13 @@ public partial class MainWindow : Window
     private static readonly Regex SteamCmdProgressRegex = new(
         @"progress:\s*(?<percentage>\d+(?:\.\d+)?)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex SteamCmdAppStateErrorRegex = new(
+        @"Error!\s*(?:App\s+'(?<appId>[^']+)'\s+state\s+is|State\s+is)\s+(?<state>0x[0-9A-F]+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // 当前选中的服务器
     private Server _currentServer;
-
     private SSMPathManager _ssmPathManager;
-
     private ObservableCollection<PlayerInfo> _players = new();
     private ObservableCollection<PlayerInfo> _bannedPlayers = new();
 
@@ -110,6 +113,7 @@ public partial class MainWindow : Window
             SsmSettings = MainSettings.LoadManagerSettings();
             ServerIdMapping.EnsureAllServersHaveIds();
         }
+        MigrateScheduledSettings();
         DataContext = SsmSettings;
 
         if (!Directory.Exists(BackgroundManagerWindow.BackgroundsDir))
@@ -155,6 +159,7 @@ public partial class MainWindow : Window
                 return;
             if (ServerTabControl.SelectedItem is Server selectedServer)
             {
+                UpdateServerConnectionPort(selectedServer);
                 StopActiveLogMonitoring();
                 _logRequestVersion++;
                 _currentServer = selectedServer;
@@ -201,6 +206,7 @@ public partial class MainWindow : Window
 
         SetupServerAutoUpdateTimer();
         InitAutoRestartTimer();
+        InitScheduledRconMessagesTimer();
         InitPlayerRefreshTimer();
 
         //if (File.Exists("SSMUpdater.exe") && File.Exists("SSMUpdater.deps.json") && File.Exists("SSMUpdater.dll") && File.Exists("SSMUpdater.runtimeconfig.json"))
@@ -227,9 +233,33 @@ public partial class MainWindow : Window
     /// <param name="e">事件参数。</param>
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        if (ServerTabControl.SelectedItem is Server selectedServer)
+            UpdateServerConnectionPort(selectedServer);
+
         UpdateWallpaper();
         await RestoreRunningServers();
         RefreshActiveLogMonitoringForStateChange();
+    }
+
+    private static void UpdateServerConnectionPort(Server server)
+    {
+        string settingsPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
+        try
+        {
+            if (File.Exists(settingsPath))
+            {
+                ServerSettings? settings = System.Text.Json.JsonSerializer.Deserialize<ServerSettings>(File.ReadAllText(settingsPath));
+                server.ConnectionPort = settings?.Port ?? 8777;
+            }
+            else
+            {
+                server.ConnectionPort = 8777;
+            }
+        }
+        catch
+        {
+            server.ConnectionPort = 8777;
+        }
     }
 
     /// <summary>
@@ -402,6 +432,79 @@ public partial class MainWindow : Window
 
     #region TimersAndScheduledTasks
 
+    private sealed class ScheduledRestartState
+    {
+        public DateOnly Date { get; set; }
+        public int Hour { get; set; }
+        public int Minute { get; set; }
+        public int Second { get; set; }
+        public bool Sent10MinuteWarning { get; set; }
+        public bool Sent5MinuteWarning { get; set; }
+        public bool Sent1MinuteWarning { get; set; }
+        public bool RestartTriggered { get; set; }
+    }
+
+    private void MigrateScheduledSettings()
+    {
+        bool changed = false;
+        if (!SsmSettings.AppSettings.ServerAutoUpdateMigrated)
+        {
+            if (SsmSettings.AppSettings.AutoUpdate)
+            {
+                foreach (Server server in SsmSettings.Servers)
+                    server.AutoUpdateEnabled = true;
+            }
+            SsmSettings.AppSettings.ServerAutoUpdateMigrated = true;
+            changed = true;
+        }
+
+        if (!SsmSettings.AppSettings.ScheduledRconMessagesDefaultDisabledMigrated)
+        {
+            // 旧版本的默认值为启用，存入 JSON 后仅修改属性初始值无法覆盖旧值。
+            foreach (Server server in SsmSettings.Servers)
+                server.RconServerSettings.Enabled = false;
+
+            SsmSettings.AppSettings.ScheduledRconMessagesDefaultDisabledMigrated = true;
+            changed = true;
+        }
+
+        foreach (Server server in SsmSettings.Servers)
+        {
+            server.RconServerSettings.ScheduledMessages ??= new ObservableCollection<RconScheduledMessage>();
+            if (server.RconServerSettings.ScheduledMessages.Count == 0 &&
+                !string.IsNullOrWhiteSpace(server.RconServerSettings.AutoMessageText))
+            {
+                server.RconServerSettings.ScheduledMessages.Add(new RconScheduledMessage
+                {
+                    Text = server.RconServerSettings.AutoMessageText,
+                    IntervalMinutes = Math.Clamp(server.RconServerSettings.AutoMessageIntervalMinutes, 1, 1440)
+                });
+                server.RconServerSettings.AutoMessageText = string.Empty;
+                changed = true;
+            }
+        }
+
+        if (!SsmSettings.AppSettings.ServerScheduledAutoRestartMigrated &&
+            (!SsmSettings.AppSettings.EnableAutoRestart || SsmSettings.Servers.Count > 0))
+        {
+            if (SsmSettings.AppSettings.EnableAutoRestart)
+            {
+                foreach (Server server in SsmSettings.Servers)
+                {
+                    server.ScheduledAutoRestartEnabled = true;
+                    server.ScheduledAutoRestartHour = Math.Clamp(SsmSettings.AppSettings.AutoRestartHour, 0, 23);
+                    server.ScheduledAutoRestartMin = Math.Clamp(SsmSettings.AppSettings.AutoRestartMin, 0, 59);
+                    server.ScheduledAutoRestartSec = Math.Clamp(SsmSettings.AppSettings.AutoRestartSec, 0, 59);
+                }
+            }
+            SsmSettings.AppSettings.ServerScheduledAutoRestartMigrated = true;
+            changed = true;
+        }
+
+        if (changed)
+            MainSettings.Save(SsmSettings);
+    }
+
     #region LogRefreshFallbackTimer
 
     /// <summary>
@@ -469,14 +572,49 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 按应用设置初始化服务器自动更新计时器。
+    /// 按服务器自动更新开关和全局间隔初始化自动更新计时器。
     /// </summary>
     public void SetupServerAutoUpdateTimer()
     {
-        if (SsmSettings.AppSettings.AutoUpdate == true)
+        AutoUpdateTimer?.Dispose();
+        AutoUpdateTimer = null;
+
+        if (!SsmSettings.Servers.Any(server => server.AutoUpdateEnabled))
+            return;
+
+        int intervalMinutes = Math.Clamp(SsmSettings.AppSettings.AutoUpdateGameInterval, 1, 1440);
+        PeriodicTimer timer = new(TimeSpan.FromMinutes(intervalMinutes));
+        AutoUpdateTimer = timer;
+        AutoUpdateLoop(timer);
+    }
+
+    private async void AutoUpdateLoop(PeriodicTimer timer)
+    {
+        try
         {
-            AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromMinutes(SsmSettings.AppSettings.AutoUpdateInterval));
-            AutoUpdateLoop();
+            while (await timer.WaitForNextTickAsync())
+            {
+                if (!ReferenceEquals(AutoUpdateTimer, timer))
+                    return;
+
+                try
+                {
+                    bool foundUpdate = await CheckForGameUpdate();
+                    if (foundUpdate && SsmSettings.Servers.Any(server => server.AutoUpdateEnabled))
+                    {
+                        ShowLogMsg("检测到服务器新版本，即将执行自动更新", Brushes.Orange);
+                        await AutoUpdate();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ShowLogWarning($"自动更新循环异常：{ex.Message}");
+                }
+        }
+        }
+        catch (ObjectDisposedException)
+        {
+            // 计时器在设置更新或窗口关闭时被替换。
         }
     }
 
@@ -492,9 +630,11 @@ public partial class MainWindow : Window
             _autoRestartTimer = null;
         }
 
-        if (!SsmSettings.AppSettings.EnableAutoRestart)
+        var scheduledServers = SsmSettings.Servers.Where(server => server.ScheduledAutoRestartEnabled).ToList();
+        if (scheduledServers.Count == 0)
         {
-            ShowLogMsg("全局自动重启：已关闭", Brushes.Gray);
+            _scheduledRestartStates.Clear();
+            //ShowLogMsg("所有服务器的定时自动重启均已关闭", Brushes.Gray);
             return;
         }
 
@@ -503,16 +643,87 @@ public partial class MainWindow : Window
         _autoRestartTimer.Tick += AutoRestartTimer_Tick;
         _autoRestartTimer.Start();
 
-        // 每天重置公告标记
-        _sentRestart10Min = false;
-        _sentRestart5Min = false;
-        _sentRestart1Min = false;
+        //ShowLogMsg($"已启用 {scheduledServers.Count} 台服务器的定时自动重启", Brushes.LimeGreen);
+    }
 
-        int h = SsmSettings.AppSettings.AutoRestartHour;
-        int m = SsmSettings.AppSettings.AutoRestartMin;
-        int s = SsmSettings.AppSettings.AutoRestartSec;
+    /// <summary>
+    /// 初始化各服务器的 RCON 定时消息调度器。
+    /// </summary>
+    public void InitScheduledRconMessagesTimer()
+    {
+        _scheduledRconMessageTimer?.Stop();
+        if (_scheduledRconMessageTimer != null)
+            _scheduledRconMessageTimer.Tick -= ScheduledRconMessageTimer_Tick;
 
-        ShowLogMsg($"全局自动重启已启用 → 每天 {h:D2}:{m:D2}:{s:D2}", Brushes.LimeGreen);
+        _scheduledRconMessages.Clear();
+        if (!SsmSettings.Servers.Any(server => server.RconServerSettings.Enabled))
+        {
+            _scheduledRconMessageTimer = null;
+            return;
+        }
+
+        _scheduledRconMessageTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _scheduledRconMessageTimer.Tick += ScheduledRconMessageTimer_Tick;
+        _scheduledRconMessageTimer.Start();
+    }
+
+    /// <summary>
+    /// 按服务器的消息间隔，通过 RCON 向运行中的服务器发送定时公告。
+    /// </summary>
+    private async void ScheduledRconMessageTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_isSendingScheduledRconMessage)
+            return;
+
+        _isSendingScheduledRconMessage = true;
+        try
+        {
+            DateTime now = DateTime.Now;
+            var activeServerKeys = new HashSet<string>();
+
+            foreach (Server server in SsmSettings.Servers)
+            {
+                RCONServerSettings settings = server.RconServerSettings;
+                string serverKey = string.IsNullOrWhiteSpace(server.UniqueId) ? server.Path : server.UniqueId;
+                if (!settings.Enabled || server.Runtime.State != ServerRuntime.ServerState.运行中)
+                    continue;
+
+                foreach (RconScheduledMessage scheduledMessage in settings.ScheduledMessages ?? new ObservableCollection<RconScheduledMessage>())
+                {
+                    string message = scheduledMessage.Text?.Trim() ?? string.Empty;
+                    int intervalMinutes = scheduledMessage.IntervalMinutes;
+                    string key = $"{serverKey}:{scheduledMessage.Id}";
+                    if (string.IsNullOrWhiteSpace(message) || intervalMinutes < 1)
+                        continue;
+
+                    activeServerKeys.Add(key);
+                    if (!_scheduledRconMessages.TryGetValue(key, out var schedule) || schedule.IntervalMinutes != intervalMinutes)
+                    {
+                        _scheduledRconMessages[key] = (intervalMinutes, now.AddMinutes(intervalMinutes));
+                        continue;
+                    }
+
+                    if (now < schedule.NextSendAt)
+                        continue;
+
+                    _scheduledRconMessages[key] = (intervalMinutes, now.AddMinutes(intervalMinutes));
+                    bool sent = await RCONClient.SendRconMessageAsync(server, message);
+                    if (!sent)
+                        ShowLogWarning($"[{server.ssmServerName}] RCON 定时消息发送失败，请检查服务器状态和 RCON 连接配置。");
+                }
+            }
+
+            foreach (string key in _scheduledRconMessages.Keys.Where(key => !activeServerKeys.Contains(key)).ToList())
+                _scheduledRconMessages.Remove(key);
+        }
+        catch (Exception ex)
+        {
+            ShowLogWarning($"RCON 定时消息处理失败：{ex.Message}");
+        }
+        finally
+        {
+            _isSendingScheduledRconMessage = false;
+        }
     }
 
     /// <summary>
@@ -522,61 +733,62 @@ public partial class MainWindow : Window
     /// <param name="e">事件参数。</param>
     private async void AutoRestartTimer_Tick(object sender, EventArgs e)
     {
+        if (_isProcessingScheduledRestart)
+            return;
+
+        _isProcessingScheduledRestart = true;
         try
         {
-            if (!SsmSettings.AppSettings.EnableAutoRestart)
-                return;
-
             var now = DateTime.Now;
-            int targetH = SsmSettings.AppSettings.AutoRestartHour;
-            int targetM = SsmSettings.AppSettings.AutoRestartMin;
-            int targetS = SsmSettings.AppSettings.AutoRestartSec;
-
-            DateTime targetTime = new DateTime(now.Year, now.Month, now.Day, targetH, targetM, targetS);
-            TimeSpan left = targetTime - now;
-
-            var runningServers = SsmSettings.Servers
-                .Where(s => s.Runtime.State == ServerRuntime.ServerState.运行中)
-                .ToList();
-
-            if (left.TotalMinutes <= 10 && left.TotalMinutes > 5 && !_sentRestart10Min)
+            foreach (Server server in SsmSettings.Servers.Where(server => server.ScheduledAutoRestartEnabled))
             {
-                _sentRestart10Min = true;
-                string msg = "【服务器通知】服务器将在 10 分钟后自动重启，请尽快安全下线！";
-                foreach (var server in runningServers)
-                    await RCONClient.SendRestartAnnounceToSingleServer(server, msg);
-            }
+                string key = string.IsNullOrWhiteSpace(server.UniqueId) ? server.Path : server.UniqueId;
+                int targetHour = Math.Clamp(server.ScheduledAutoRestartHour, 0, 23);
+                int targetMinute = Math.Clamp(server.ScheduledAutoRestartMin, 0, 59);
+                int targetSecond = Math.Clamp(server.ScheduledAutoRestartSec, 0, 59);
+                if (!_scheduledRestartStates.TryGetValue(key, out ScheduledRestartState? state) ||
+                    state.Date != DateOnly.FromDateTime(now) || state.Hour != targetHour ||
+                    state.Minute != targetMinute || state.Second != targetSecond)
+                {
+                    _scheduledRestartStates[key] = state = new ScheduledRestartState
+                    {
+                        Date = DateOnly.FromDateTime(now),
+                        Hour = targetHour,
+                        Minute = targetMinute,
+                        Second = targetSecond
+                    };
+                }
 
-            if (left.TotalMinutes <= 5 && left.TotalMinutes > 1 && !_sentRestart5Min)
-            {
-                _sentRestart5Min = true;
-                string msg = "【服务器通知】服务器将在 5 分钟后自动重启！";
-                foreach (var server in runningServers)
-                    await RCONClient.SendRestartAnnounceToSingleServer(server, msg);
-            }
+                if (server.Runtime.State != ServerRuntime.ServerState.运行中 || state.RestartTriggered)
+                    continue;
 
-            if (left.TotalMinutes <= 1 && left.TotalSeconds > 10 && !_sentRestart1Min)
-            {
-                _sentRestart1Min = true;
-                string msg = "【服务器通知】服务器将在 1 分钟后立即重启，请立刻下线！";
-                foreach (var server in runningServers)
-                    await RCONClient.SendRestartAnnounceToSingleServer(server, msg);
-            }
+                DateTime targetTime = new(now.Year, now.Month, now.Day, targetHour, targetMinute, targetSecond);
+                TimeSpan left = targetTime - now;
 
-            if (now.Hour == targetH && now.Minute == targetM && now.Second == targetS)
-            {
-                _sentRestart10Min = false;
-                _sentRestart5Min = false;
-                _sentRestart1Min = false;
-
-                AutoRestart();
-
-                _autoRestartTimer.Stop();
-                await Task.Delay(1000);
-                _autoRestartTimer.Start();
+                if (left.TotalMinutes <= 10 && left.TotalMinutes > 5 && !state.Sent10MinuteWarning)
+                {
+                    state.Sent10MinuteWarning = true;
+                    await RCONClient.SendRestartAnnounceToSingleServer(server, "【服务器通知】服务器将在 10 分钟后自动重启，请尽快安全下线！");
+                }
+                if (left.TotalMinutes <= 5 && left.TotalMinutes > 1 && !state.Sent5MinuteWarning)
+                {
+                    state.Sent5MinuteWarning = true;
+                    await RCONClient.SendRestartAnnounceToSingleServer(server, "【服务器通知】服务器将在 5 分钟后自动重启！");
+                }
+                if (left.TotalMinutes <= 1 && left.TotalSeconds > 10 && !state.Sent1MinuteWarning)
+                {
+                    state.Sent1MinuteWarning = true;
+                    await RCONClient.SendRestartAnnounceToSingleServer(server, "【服务器通知】服务器将在 1 分钟后立即重启，请立刻下线！");
+                }
+                if (now >= targetTime && now < targetTime.AddMinutes(1))
+                {
+                    state.RestartTriggered = true;
+                    await AutoRestartServerAsync(server);
+                }
             }
         }
-        catch { }
+        catch (Exception ex) { ShowLogWarning($"定时自动重启处理失败：{ex.Message}"); }
+        finally { _isProcessingScheduledRestart = false; }
     }
 
     /// <summary>
@@ -1150,31 +1362,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 将带时间戳和指定颜色的消息写入目标日志视图。
-    /// </summary>
-    /// <param name="logType">日志视图类型。</param>
-    /// <param name="message">要显示或发送的消息内容。</param>
-    /// <param name="color">消息显示颜色。</param>
-    public void InternalShowLogMsg(LogType logType, string message, Brush color)
-    {
-        RichTextBox targetTextBox = _logTypeToTexbox[logType];
-        if (targetTextBox != null)
-        {
-            string timestampedMessage = $"[{GetTimestamp("log")}]  {message}";
-            Paragraph paragraph = new Paragraph(new Run(timestampedMessage));
-            paragraph.Foreground = color;
-            paragraph.Margin = new Thickness(0);
-
-            targetTextBox.Document.Blocks.Add(paragraph);
-            if (_logTypeToCheckbox[logType]?.IsChecked == true)
-            {
-                targetTextBox.ScrollToEnd();
-            }
-        }
-
-    }
-
-    /// <summary>
     /// 根据日志文字中的错误或警告标记返回显示颜色。
     /// </summary>
     /// <param name="line">待检查的日志文本行。</param>
@@ -1497,63 +1684,17 @@ public partial class MainWindow : Window
     #region AutomaticUpdateAndRestart
 
     /// <summary>
-    /// 周期检查服务器更新并按设置执行自动更新。
-    /// </summary>
-    private async void AutoUpdateLoop()
-    {
-        while (await AutoUpdateTimer.WaitForNextTickAsync())
-        {
-            try
-            {
-                bool foundUpdate = await CheckForUpdate();
-                if (foundUpdate && SsmSettings.Servers.Count > 0)
-                {
-                    ShowLogMsg("检测到服务器新版本，即将执行自动更新", Brushes.Orange);
-                    await AutoUpdate();
-                }
-            }
-            catch (Exception ex)
-            {
-                ShowLogWarning($"自动更新循环异常：{ex.Message}");
-            }
-        }
-    }
-
-    /// <summary>
     /// 并行处理符合自动重启条件的服务器。
     /// </summary>
-    private async void AutoRestart()
+    private async Task AutoRestartServerAsync(Server server)
     {
-        List<Task> serverTasks = new List<Task>();
-        List<Server> runningServers = new List<Server>();
-
-        foreach (Server server in SsmSettings.Servers)
-        {
-            if (server.Runtime.State == ServerRuntime.ServerState.运行中)
-            {
-                server.Runtime.UserStopped = true;
-
-                runningServers.Add(server);
-            }
-        }
-
-        if (runningServers.Count > 0)
-        {
-            //SendDiscordMessage(SsmSettings.WebhookSettings.UpdateWait);
-            await Task.Delay(TimeSpan.FromSeconds(0));
-        }
-        else
-        {
-            ShowLogWarning($"当前无正在运行的服务器，自动重启未生效。");
+        if (server.Runtime.State != ServerRuntime.ServerState.运行中)
             return;
-        }
-
-        ShowLogWarning($"正在自动重启 {runningServers.Count} 个服务器" + ((runningServers.Count > 0) ? $"，在此之前即将关闭 {runningServers.Count} 个服务器" : ""));
-        var stopTasks = runningServers.Select(StopServer).ToList();
-        await Task.WhenAll(stopTasks);
-        var startTasks = runningServers.Select(StartServer).ToList();
-        await Task.WhenAll(startTasks);
-        ShowLogDefault($"自动重启完成。");
+        ShowLogWarning($"正在定时重启服务器：{server.ssmServerName}");
+        await StopServer(server);
+        bool started = await StartServer(server);
+        ShowLogMsg(started ? $"服务器 {server.ssmServerName} 定时重启完成。" : $"服务器 {server.ssmServerName} 定时重启失败。",
+            started ? Brushes.LimeGreen : Brushes.Red);
     }
 
     #endregion AutomaticUpdateAndRestart
@@ -1641,7 +1782,7 @@ public partial class MainWindow : Window
         }
 
         ShowLogDefault("正在获取Soulmask Dedicated Server应用信息。");
-        await CheckForUpdate();
+        await CheckForGameUpdate();
 
         return true;
     }
@@ -1697,14 +1838,15 @@ public partial class MainWindow : Window
         }
         server.Runtime.State = ServerRuntime.ServerState.更新中;
         Process steamcmd = null;
+        bool showSteamCMDWindow = SsmSettings.AppSettings?.ShowSteamCMDWindow ?? true;
 
         Dispatcher.Invoke(() =>
         {
             InstallationProgressBar.IsIndeterminate = true;
             InstallationProgressBar.Value = 0;
-            InstallationProgressBar.Visibility = Visibility.Visible;
+            InstallationProgressBar.Visibility = showSteamCMDWindow ? Visibility.Collapsed : Visibility.Visible;
             InstallationProgressText.Text = "准备中";
-            InstallationProgressText.Visibility = Visibility.Visible;
+            InstallationProgressText.Visibility = showSteamCMDWindow ? Visibility.Collapsed : Visibility.Visible;
         });
 
         if (!Directory.Exists(server.Path))
@@ -1776,64 +1918,93 @@ public partial class MainWindow : Window
 
         int hasError = 0;
         CancellationTokenSource cts = new CancellationTokenSource(); // 用于取消读取
+#if DEBUG
+        string? steamCmdOutputLogPath = null;
+#endif
+
+        void HandleSteamCmdOutputLine(string? outputLine, bool isStandardOutput)
+        {
+            if (string.IsNullOrWhiteSpace(outputLine))
+                return;
+
+#if DEBUG
+            if (isStandardOutput)
+                AppendSteamCmdOutputLog(steamCmdOutputLogPath, outputLine);
+#endif
+
+            string? errorMessage = GetSteamCmdErrorMessage(outputLine);
+            if (errorMessage != null)
+            {
+                if (Interlocked.Exchange(ref hasError, 1) == 0)
+                    ShowLogError(errorMessage);
+                return;
+            }
+
+            if (!isStandardOutput || showSteamCMDWindow || Volatile.Read(ref hasError) != 0)
+                return;
+
+            Match progressMatch = SteamCmdProgressRegex.Match(outputLine);
+            if (progressMatch.Success && double.TryParse(
+                    progressMatch.Groups["percentage"].Value,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out double percentage))
+            {
+                UpdateInstallationProgress(percentage);
+            }
+        }
 
         try
         {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = steamCmdPath,
+                Arguments = parameters,
+                WorkingDirectory = server.Path,
+                CreateNoWindow = !showSteamCMDWindow,
+                UseShellExecute = showSteamCMDWindow
+            };
+
+            if (!showSteamCMDWindow)
+            {
+                startInfo.RedirectStandardOutput = true;
+                startInfo.RedirectStandardError = true;
+                startInfo.StandardOutputEncoding = Encoding.UTF8;
+                startInfo.StandardErrorEncoding = Encoding.UTF8;
+#if DEBUG
+                try
+                {
+                    steamCmdOutputLogPath = CreateSteamCmdOutputLog(server);
+                    File.WriteAllText(
+                        steamCmdOutputLogPath,
+                        $"服务器：{server.ssmServerName}{Environment.NewLine}路径：{server.Path}{Environment.NewLine}开始时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}{Environment.NewLine}--- standardOutput ---{Environment.NewLine}",
+                        Encoding.UTF8);
+                }
+                catch (Exception ex)
+                {
+                    ShowLogWarning($"创建 SteamCMD 调试日志失败：{ex.Message}");
+                }
+#endif
+            }
+
             steamcmd = new Process
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = steamCmdPath,
-                    Arguments = parameters,
-                    CreateNoWindow = !SsmSettings.AppSettings.ShowSteamWindow,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    WorkingDirectory = server.Path,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8
-                }
+                StartInfo = startInfo
             };
+
+            if (!showSteamCMDWindow)
+            {
+                steamcmd.OutputDataReceived += (_, e) => HandleSteamCmdOutputLine(e.Data, isStandardOutput: true);
+                steamcmd.ErrorDataReceived += (_, e) => HandleSteamCmdOutputLine(e.Data, isStandardOutput: false);
+            }
 
             steamcmd.Start();
             server.Runtime.Process = steamcmd;
-            steamcmd.OutputDataReceived += (sender, e) =>
+            if (!showSteamCMDWindow)
             {
-                if (Volatile.Read(ref hasError) != 0)
-                    return;
-
-                if (!string.IsNullOrEmpty(e.Data))
-                {
-                    Match progressMatch = SteamCmdProgressRegex.Match(e.Data);
-                    if (progressMatch.Success && double.TryParse(
-                            progressMatch.Groups["percentage"].Value,
-                            System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture,
-                            out double percentage))
-                    {
-                        UpdateInstallationProgress(percentage);
-                    }
-
-                    if (e.Data.Contains("默认文件夹"))
-                    {
-                        ShowLogError("错误：路径包含中文，请不要在带有中文的目录中使用！");
-                        Interlocked.Exchange(ref hasError, 1);
-                        KillServerSteamcmd(server);
-                        return;
-                    }
-
-                    if (e.Data.Contains("FAILED (No Connection)"))
-                    {
-                        ShowLogError("错误：服务器更新失败，请检查你的网络连接！");
-                        Interlocked.Exchange(ref hasError, 1);
-                        KillServerSteamcmd(server);
-                        return;
-                    }
-                }
-            };
-
-            steamcmd.BeginOutputReadLine();
-            steamcmd.BeginErrorReadLine();
+                steamcmd.BeginOutputReadLine();
+                steamcmd.BeginErrorReadLine();
+            }
             await steamcmd.WaitForExitAsync();
 
             if (Volatile.Read(ref hasError) != 0 || steamcmd.ExitCode != 0)
@@ -2311,19 +2482,26 @@ public partial class MainWindow : Window
     {
         SendDiscordMessage(SsmSettings.WebhookSettings.UpdateFound);
 
+        List<Server> serversToUpdate = SsmSettings.Servers.Where(server => server.AutoUpdateEnabled).ToList();
+        if (serversToUpdate.Count == 0)
+        {
+            ShowLogDefault("没有启用自动更新的服务器，本次跳过更新。");
+            return;
+        }
+
         if (!File.Exists(Path.Combine(Directory.GetCurrentDirectory(), "SteamCMD", "steamcmd.exe")))
         {
             await UpdateSteamCMD();
         }
 
-        var runningServers = SsmSettings.Servers
+        var runningServers = serversToUpdate
             .Where(s => s.Runtime.State == ServerRuntime.ServerState.运行中)
             .ToList();
 
         if (runningServers.Count == 0)
         { 
             ShowLogDefault("无运行中的服务器，直接执行更新");
-            foreach (var server in SsmSettings.Servers)
+            foreach (var server in serversToUpdate)
                 await UpdateGame(server);
             ShowLogDefault("自动更新完成");
             return;
@@ -2341,7 +2519,7 @@ public partial class MainWindow : Window
         await Task.WhenAll(stopTasks);
 
         ShowLogDefault("所有服务器已关闭，开始更新...");
-        foreach (var server in SsmSettings.Servers)
+        foreach (var server in serversToUpdate)
             await UpdateGame(server);
 
         ShowLogDefault("更新完成，开始启动服务器...");
@@ -2468,7 +2646,7 @@ public partial class MainWindow : Window
     /// 检查服务器是否存在可用更新。
     /// </summary>
     /// <returns>异步操作是否成功。</returns>
-    private async Task<bool> CheckForUpdate()
+    private async Task<bool> CheckForGameUpdate()
     {
         bool foundUpdate = false;
         //ShowLogWarning($"正在查询服务器更新...");
@@ -2742,36 +2920,8 @@ public partial class MainWindow : Window
 
         switch (e.PropertyName)
         {
-            case "AutoUpdate":
-                if (SsmSettings.AppSettings.AutoUpdate == true)
-                {
-#if DEBUG
-                    //AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
-#else
-//                        AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromMinutes(SsmSettings.AppSettings.AutoUpdateInterval));
-#endif
-                    //AutoUpdateLoop();
-                    LookForAppUpdate();
-                }
-                else
-                {
-                    if (AutoUpdateTimer != null)
-                    {
-                        AutoUpdateTimer.Dispose();
-                    }
-                }
-                break;
-            case "AutoUpdateInterval":
-                if (SsmSettings.AppSettings.AutoUpdate == true && AutoUpdateTimer != null)
-                {
-                    AutoUpdateTimer.Dispose();
-#if DEBUG
-                    AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
-#else
-                    AutoUpdateTimer = new PeriodicTimer(TimeSpan.FromMinutes(SsmSettings.AppSettings.AutoUpdateInterval));
-#endif
-                    AutoUpdateLoop();
-                }
+            case "AutoUpdateGameInterval":
+                SetupServerAutoUpdateTimer();
                 break;
             case "DarkMode":
                 if (SsmSettings.AppSettings.DarkMode == true)
@@ -3155,19 +3305,6 @@ public partial class MainWindow : Window
             {
                 try
                 {
-                    string engineIniFilePath = Path.Combine(SsmSettings.Servers[ServerTabControl.SelectedIndex].Path, "WS", "Saved", "Config", "WindowsServer", "Engine.ini");
-                    if (!File.Exists(engineIniFilePath))
-                    {
-                        var dialog = new ContentDialog
-                        {
-                            Owner = this,
-                            Title = "服务器初始配置文件不存在",
-                            Content = "未找到服务器初始配置文件，请先启动一次服务器后再进行配置！",
-                            PrimaryButtonText = "确定",
-                        }.ShowAsync();
-                        return;
-                    }
-
                     if (SsmSettings.AppSettings.AutoLoadEditor == true && !(ServerTabControl.SelectedIndex == -1))
                     {
                         ServerSettingsEditor sSettingsEditor = new(SsmSettings.Servers, true, ServerTabControl.SelectedIndex);
@@ -3175,7 +3312,7 @@ public partial class MainWindow : Window
                     }
                     else
                     {
-                        ServerSettingsEditor sSettingsEditor = new(SsmSettings.Servers);
+                        ServerSettingsEditor sSettingsEditor = new(SsmSettings.Servers, false, ServerTabControl.SelectedIndex);
                         sSettingsEditor.Show();
                     }
                 }
@@ -3239,6 +3376,92 @@ public partial class MainWindow : Window
         InstallationProgressBar.Value = percentage;
         InstallationProgressText.Text = $"{percentage:0.0}%";
     }
+
+    /// <summary>
+    /// 根据 SteamCMD 输出识别常见更新错误并生成面向用户的说明。
+    /// </summary>
+    /// <param name="outputLine">SteamCMD 输出的一行文本。</param>
+    /// <returns>识别到错误时返回说明，未发现错误时返回空值。</returns>
+    private static string? GetSteamCmdErrorMessage(string outputLine)
+    {
+        if (outputLine.Contains("默认文件夹", StringComparison.OrdinalIgnoreCase))
+            return "SteamCMD更新失败：服务器路径包含中文，请将服务器目录移动到不含中文的路径后重试。";
+
+        if (outputLine.Contains("FAILED (No Connection)", StringComparison.OrdinalIgnoreCase) ||
+            outputLine.Contains("No connection to content servers", StringComparison.OrdinalIgnoreCase))
+        {
+            return "SteamCMD无法连接更新内容服务器（网络或Steam节点暂时不可用），请稍后重试，并检查网络、防火墙或代理。";
+        }
+
+        if (outputLine.Contains("No subscription", StringComparison.OrdinalIgnoreCase))
+            return "SteamCMD下载权限不足：当前登录方式没有该应用或Depot的授权。";
+
+        Match appStateMatch = SteamCmdAppStateErrorRegex.Match(outputLine);
+        if (appStateMatch.Success)
+        {
+            string appId = appStateMatch.Groups["appId"].Value;
+            string state = appStateMatch.Groups["state"].Value.ToUpperInvariant();
+            string target = string.IsNullOrEmpty(appId) ? "SteamCMD更新" : $"应用 {appId} 更新";
+
+            return state switch
+            {
+                "0X402" => $"{target}失败（状态码 0x402）：Steam连接或内容下载节点异常，通常可稍后重试；请同时检查SteamCMD的connection_log和content_log。",
+                "0X202" => $"{target}失败（状态码 0x202）：目标磁盘空间不足，请检查可用空间。",
+                "0X606" => $"{target}失败（状态码 0x606）：SteamCMD无法写入目标目录，请检查目录权限、磁盘状态或安全软件拦截。",
+                "0X626" => $"{target}失败（状态码 0x626）：SteamCMD缺少更新文件，可能是下载中断或缓存不完整，请重试并检查SteamCMD日志。",
+                "0X6A6" => $"{target}失败（状态码 0x6A6）：检测到更新文件损坏，请重试验证或重新下载。",
+                "0X6" => $"{target}失败（状态码 0x6）：可能无法连接内容服务器，或当前登录方式无权访问所需Depot；请检查网络及下载权限。",
+                _ => $"{target}失败（SteamCMD状态码 {state}），请查看SteamCMD的content_log和connection_log获取详细原因。"
+            };
+        }
+
+        if (outputLine.Contains("Error!", StringComparison.OrdinalIgnoreCase) ||
+            outputLine.Contains("Failed to install app", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"SteamCMD报告更新失败：{outputLine}。请查看SteamCMD的content_log和connection_log获取详细原因。";
+        }
+
+        return null;
+    }
+
+#if DEBUG
+    /// <summary>
+    /// 创建当前服务器更新过程的 SteamCMD 标准输出日志文件。
+    /// </summary>
+    /// <param name="server">正在更新的服务器。</param>
+    /// <returns>日志文件的完整路径。</returns>
+    private static string CreateSteamCmdOutputLog(Server server)
+    {
+        string localDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string logDirectory = Path.Combine(localDataPath, "SoulmaskServerManager", "Logs", "SteamCMD");
+        Directory.CreateDirectory(logDirectory);
+
+        string safeServerName = string.Concat(server.ssmServerName.Select(character =>
+            Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
+        string fileName = $"SteamCMD_{safeServerName}_{DateTime.Now:yyyyMMdd_HHmmss_fff}.log";
+        return Path.Combine(logDirectory, fileName);
+    }
+
+    /// <summary>
+    /// 将 SteamCMD 标准输出追加到当前更新的调试日志。
+    /// </summary>
+    /// <param name="logPath">调试日志路径。</param>
+    /// <param name="outputLine">标准输出的一行内容。</param>
+    private static void AppendSteamCmdOutputLog(string? logPath, string outputLine)
+    {
+        if (string.IsNullOrEmpty(logPath))
+            return;
+
+        try
+        {
+            File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss.fff}] {outputLine}{Environment.NewLine}", Encoding.UTF8);
+        }
+        catch
+        {
+            // 调试日志写入失败不应中断服务器更新。
+        }
+    }
+#endif
 
     #endregion ConfigurationEditorButtons
 
@@ -3310,10 +3533,20 @@ public partial class MainWindow : Window
     /// <param name="e">事件参数。</param>
     private void ManageModsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!Application.Current.Windows.OfType<ModManagerWindows>().Any())
+        Server? selectedServer = ServerTabControl.SelectedItem as Server;
+        ModManagerWindows? modManagerWindows = Application.Current.Windows
+            .OfType<ModManagerWindows>()
+            .FirstOrDefault();
+
+        if (modManagerWindows == null)
         {
-            ModManagerWindows modManagerWindows = new ModManagerWindows(SsmSettings);
+            modManagerWindows = new ModManagerWindows(SsmSettings, selectedServer);
             modManagerWindows.Show();
+        }
+        else
+        {
+            modManagerWindows.SelectServer(selectedServer);
+            modManagerWindows.Activate();
         }
     }
 
@@ -3333,11 +3566,8 @@ public partial class MainWindow : Window
         }
         else
         {
-            if (!Application.Current.Windows.OfType<ManagerSettings>().Any())
-            {
-                mSettings = new(SsmSettings);
-                mSettings.Show();
-            }
+            mSettings = new(SsmSettings);
+            mSettings.ShowDialog();
         }
     }
 
@@ -3764,20 +3994,8 @@ public partial class MainWindow : Window
         };
     }
 
-    /// <summary>
-    /// 以错误颜色向主控制台输出消息。
-    /// </summary>
-    /// <param name="message">要显示或发送的消息内容。</param>
     public void ShowLogError(string message) => ShowLogMsg($"{message}", Brushes.Red);
-    /// <summary>
-    /// 以警告颜色向主控制台输出消息。
-    /// </summary>
-    /// <param name="message">要显示或发送的消息内容。</param>
     public void ShowLogWarning(string message) => ShowLogMsg($"{message}", Brushes.Yellow);
-    /// <summary>
-    /// 以默认状态颜色向主控制台输出消息。
-    /// </summary>
-    /// <param name="message">要显示或发送的消息内容。</param>
     public void ShowLogDefault(string message) => ShowLogMsg($"{message}", Brushes.Lime);
     /// <summary>
     /// 按指定颜色和日志类型输出消息。
@@ -3793,7 +4011,30 @@ public partial class MainWindow : Window
             Dispatcher.Invoke(() => InternalShowLogMsg(logType, message, color));
     }
 
+    /// <summary>
+    /// 将带时间戳和指定颜色的消息写入目标日志视图。
+    /// </summary>
+    /// <param name="logType">日志视图类型。</param>
+    /// <param name="message">要显示或发送的消息内容。</param>
+    /// <param name="color">消息显示颜色。</param>
+    public void InternalShowLogMsg(LogType logType, string message, Brush color)
+    {
+        RichTextBox targetTextBox = _logTypeToTexbox[logType];
+        if (targetTextBox != null)
+        {
+            string timestampedMessage = $"[{GetTimestamp("log")}]  {message}";
+            Paragraph paragraph = new Paragraph(new Run(timestampedMessage));
+            paragraph.Foreground = color;
+            paragraph.Margin = new Thickness(0);
+
+            targetTextBox.Document.Blocks.Add(paragraph);
+            if (_logTypeToCheckbox[logType]?.IsChecked == true)
+            {
+                targetTextBox.ScrollToEnd();
+            }
+        }
+
+    }
+
     #endregion TimestampAndLogMessages
 }
-
-

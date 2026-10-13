@@ -66,7 +66,7 @@ namespace SoulmaskServerManager
             {
                 Filter = "JSON files|*.json",
                 DefaultExt = "json",
-                FileName = "GameXishu_Default.json",
+                FileName = "GameXishu_Custom.json",
                 InitialDirectory = Directory.GetCurrentDirectory()
             };
 
@@ -77,7 +77,7 @@ namespace SoulmaskServerManager
                 string json = File.ReadAllText(dialog.FileName);
                 string fileName = Path.GetFileName(dialog.FileName);
 
-                if (fileName.Equals("GameXishu_Default.json", StringComparison.OrdinalIgnoreCase))
+                if (fileName.Equals("GameXishu_Custom.json", StringComparison.OrdinalIgnoreCase))
                 {
                     LoadFromJson(json, updateOriginalSettings: false);
                 }
@@ -183,7 +183,7 @@ namespace SoulmaskServerManager
             {
                 Filter = "JSON files|*.json",
                 DefaultExt = "json",
-                FileName = "GameXishu_Default.json",
+                FileName = "GameXishu_Custom.json",
                 InitialDirectory = Directory.GetCurrentDirectory()
             };
 
@@ -208,7 +208,7 @@ namespace SoulmaskServerManager
             {
                 Filter = "JSON files|*.json",
                 DefaultExt = "json",
-                FileName = "GameXishu_Default.json",
+                FileName = "GameXishu_Custom.json",
                 InitialDirectory = Directory.GetCurrentDirectory()
             };
 
@@ -305,7 +305,7 @@ namespace SoulmaskServerManager
                 try
                 {
                     SaveToServerPath(server);
-                    await ShowEditorMessageAsync("应用结果", "没有检测到系数改动，已保存到 GameXishu_Default.json 和 GameXishu.json。");
+                    await ShowEditorMessageAsync("应用结果", "没有检测到系数改动，已保存到 GameXishu_Custom.json 和 GameXishu.json。");
                 }
                 catch (Exception ex)
                 {

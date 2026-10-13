@@ -821,7 +821,7 @@ namespace SoulmaskServerManager
         }
 
         private static void AppendInvocationLog(string logPath, int index, string? userId,
-            System.Collections.ObjectModel.Collection<string> arguments, int exitCode, string standardOutput, string standardError)
+            Collection<string> arguments, int exitCode, string standardOutput, string standardError)
         {
             var logEntry = new StringBuilder()
                 .AppendLine($"调用序号：{index + 1}")

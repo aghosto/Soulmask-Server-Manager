@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -88,6 +89,14 @@ public class MainSettings : PropertyChangedBase
 /// </summary>
 public class Server : PropertyChangedBase
 {
+    private int _connectionPort = 8777;
+    [JsonIgnore]
+    public int ConnectionPort
+    {
+        get => _connectionPort;
+        set => SetField(ref _connectionPort, value);
+    }
+
     private string _ssmServerName = "灵魂面甲服务器";
     public string ssmServerName
     {
@@ -114,6 +123,36 @@ public class Server : PropertyChangedBase
     {
         get => _autoRestart;
         set => SetField(ref _autoRestart, value);
+    }
+    private bool _autoUpdateEnabled;
+    public bool AutoUpdateEnabled
+    {
+        get => _autoUpdateEnabled;
+        set => SetField(ref _autoUpdateEnabled, value);
+    }
+    private bool _scheduledAutoRestartEnabled;
+    public bool ScheduledAutoRestartEnabled
+    {
+        get => _scheduledAutoRestartEnabled;
+        set => SetField(ref _scheduledAutoRestartEnabled, value);
+    }
+    private int _scheduledAutoRestartHour;
+    public int ScheduledAutoRestartHour
+    {
+        get => _scheduledAutoRestartHour;
+        set => SetField(ref _scheduledAutoRestartHour, Math.Clamp(value, 0, 23));
+    }
+    private int _scheduledAutoRestartMin;
+    public int ScheduledAutoRestartMin
+    {
+        get => _scheduledAutoRestartMin;
+        set => SetField(ref _scheduledAutoRestartMin, Math.Clamp(value, 0, 59));
+    }
+    private int _scheduledAutoRestartSec;
+    public int ScheduledAutoRestartSec
+    {
+        get => _scheduledAutoRestartSec;
+        set => SetField(ref _scheduledAutoRestartSec, Math.Clamp(value, 0, 59));
     }
     private bool _autoStart = false;
     public bool AutoStart
@@ -237,11 +276,24 @@ public class ServerRuntime : PropertyChangedBase
 /// </summary>
 public class RCONServerSettings : PropertyChangedBase
 {
-    private bool _enabled = true;
+    private bool _enabled = false;
     public bool Enabled
     {
         get => _enabled;
         set => SetField(ref _enabled, value);
+    }
+    public ObservableCollection<RconScheduledMessage> ScheduledMessages { get; set; } = new();
+    private int _autoMessageIntervalMinutes = 30;
+    public int AutoMessageIntervalMinutes
+    {
+        get => _autoMessageIntervalMinutes;
+        set => SetField(ref _autoMessageIntervalMinutes, value);
+    }
+    private string _autoMessageText = string.Empty;
+    public string AutoMessageText
+    {
+        get => _autoMessageText;
+        set => SetField(ref _autoMessageText, value);
     }
     private string _ipAddress = "127.0.0.1";
     public string IPAddress
@@ -268,6 +320,19 @@ public class RCONServerSettings : PropertyChangedBase
         set => SetField(ref _password, value);
     }
 
+}
+
+public class RconScheduledMessage : PropertyChangedBase
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    private string _text = string.Empty;
+    public string Text { get => _text; set => SetField(ref _text, value); }
+    private int _intervalMinutes = 30;
+    public int IntervalMinutes
+    {
+        get => _intervalMinutes;
+        set => SetField(ref _intervalMinutes, Math.Clamp(value, 1, 1440));
+    }
 }
 
 /// <summary>
@@ -301,17 +366,17 @@ public class AppSettings : PropertyChangedBase
         get => _autoUpdateApp;
         set => SetField(ref _autoUpdateApp, value);
     }
-    private bool _showSteamWindow = true;
-    public bool ShowSteamWindow
+    private bool _showSteamCMDWindow = true;
+    public bool ShowSteamCMDWindow
     {
-        get => _showSteamWindow;
-        set => SetField(ref _showSteamWindow, value);
+        get => _showSteamCMDWindow;
+        set => SetField(ref _showSteamCMDWindow, value);
     }
-    private int _autoUpdateInterval = 60;
-    public int AutoUpdateInterval
+    private int _autoUpdateGameInterval = 60;
+    public int AutoUpdateGameInterval
     {
-        get => _autoUpdateInterval;
-        set => SetField(ref _autoUpdateInterval, value);
+        get => _autoUpdateGameInterval;
+        set => SetField(ref _autoUpdateGameInterval, value);
     }
     private string _lastUpdateTimeUNIX = "";
     public string LastUpdateTimeUNIX
@@ -356,6 +421,9 @@ public class AppSettings : PropertyChangedBase
         get => _enableAutoRestart;
         set => SetField(ref _enableAutoRestart, value);
     }
+    public bool ServerScheduledAutoRestartMigrated { get; set; }
+    public bool ScheduledRconMessagesDefaultDisabledMigrated { get; set; }
+    public bool ServerAutoUpdateMigrated { get; set; }
     private int _autoRestartHour = 00;
     public int AutoRestartHour
     {

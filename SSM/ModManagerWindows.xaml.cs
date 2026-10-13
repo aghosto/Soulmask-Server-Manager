@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -18,8 +19,10 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
+using System.Windows.Threading;
 
 namespace SoulmaskServerManager
 {
@@ -37,7 +40,7 @@ namespace SoulmaskServerManager
         private int _currentPage = 1;
         private int _pageSize = 30; 
         private int _totalPage = 1;
-        private int _totalModCount = 0;
+        private int? _totalModCount;
 
         private string _currentSearchText = "";
         private bool _isSearchMode = false;
@@ -49,39 +52,76 @@ namespace SoulmaskServerManager
         private InstalledModViewModel _draggedMod;
         private Point _dragStartPoint;
         private bool _isDragging = false;
+        private bool _dropCompleted = false;
         private int _originalIndex = -1;
         private int _lastPlaceholderIndex = -1;
         private int _finalInsertIndex = -1;
         private InstalledModViewModel _placeholderMod;
+        private readonly DispatcherTimer _dragAutoScrollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        private int _dragAutoScrollDirection;
+        private Point _lastDragPosition;
 
         private Dictionary<string, string> _modNameCache = new Dictionary<string, string>();
         private CancellationTokenSource _detailCts;
+        private CancellationTokenSource _pageLoadCts;
+        private int _pageLoadRequestId;
 
-        public ModManagerWindows(MainSettings mainSettings)
+        public ModManagerWindows(MainSettings mainSettings, Server? selectedServer = null)
         {
             SsmSettings = mainSettings;
             InitializeComponent();
+            _dragAutoScrollTimer.Tick += InstalledMods_DragAutoScrollTimer_Tick;
             _http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
             SteamServerComboBox.DataContext = SsmSettings;
 
             if (SsmSettings.Servers.Count > 0)
             {
-                SteamServerComboBox.SelectedIndex = 0;
+                SelectServer(selectedServer);
             }
+            Closed += (_, _) =>
+            {
+                _pageLoadCts?.Cancel();
+                _detailCts?.Cancel();
+            };
             Loaded += async (s, e) => await LoadPageAsync(1);
+        }
+
+        /// <summary>
+        /// 选择要管理 Mod 的服务器；未指定或未包含在服务器列表中时选择第一台服务器。
+        /// </summary>
+        /// <param name="server">希望选中的服务器。</param>
+        public void SelectServer(Server? server)
+        {
+            if (SsmSettings.Servers.Count == 0)
+                return;
+
+            SteamServerComboBox.SelectedItem = server != null && SsmSettings.Servers.Contains(server)
+                ? server
+                : SsmSettings.Servers[0];
         }
 
         private async void DgMods_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (dgMods.SelectedItem is not SteamMod mod) return;
+            if (dgMods.SelectedItem is not SteamMod mod)
+            {
+                _detailCts?.Cancel();
+                return;
+            }
 
             // Cancel any previous detail fetch in progress
             _detailCts?.Cancel();
             _detailCts = new CancellationTokenSource();
             var ct = _detailCts.Token;
 
-            // Show basic info immediately (from HTML parsing)
+            ShowModDetails(mod);
+
+            // Fetch full details from Steam API
+            await FetchModDetailAsync(mod.Id, ct);
+        }
+
+        private void ShowModDetails(SteamMod mod)
+        {
             ModIdText.Text = mod.Id;
             ModTitleText.Text = mod.Title;
             ModAuthorText.Text = mod.Author;
@@ -100,35 +140,33 @@ namespace SoulmaskServerManager
 
             ModSubsText.Text = mod.Subscriptions > 0 ? mod.Subscriptions.ToString("N0") : "";
             BuildDescriptionText(mod.Description ?? "");
-
-            // Fetch full details from Steam API
-            await FetchModDetailAsync(mod.Id, ct);
         }
 
-        private async void ServerComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void SelectFirstMod()
         {
-            Server server = (Server)SteamServerComboBox.SelectedItem;
-
-            if (server.SubscribedMods.Count > 0)
-            {
-                for (int i = 0; i < server.SubscribedMods.Count; i++)
-                {
-                    foreach (SteamMod mod in SteamMods.ModList)
-                    {
-                        if (server.SubscribedMods.Contains(mod.Id))
-                            mod.IsChecked = true;
-                        else
-                            mod.IsChecked = false;
-                    }
-                }
-                RefreshInstalledModGridAsync();
-            }
+            dgMods.SelectedIndex = -1;
+            if (dgMods.Items.Count > 0)
+                dgMods.SelectedIndex = 0;
             else
             {
-                foreach (SteamMod mod in SteamMods.ModList)
-                    mod.IsChecked = false;
+                _detailCts?.Cancel();
+                ModIdText.Text = "";
+                ModTitleText.Text = "";
+                ModAuthorText.Text = "";
+                ModAuthorHyperlink.NavigateUri = null;
+                ModImage.Source = null;
+                ModSubsText.Text = "";
+                BuildDescriptionText("");
             }
-            await LoadPageAsync(1);
+        }
+
+        private void ServerComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SteamServerComboBox.SelectedItem is not Server server)
+                return;
+
+            AutoCheckSubscribedMods(_allMods);
+            RefreshInstalledModGridAsync();
         }
 
         private async void ModSearchBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -155,160 +193,144 @@ namespace SoulmaskServerManager
             await LoadPageAsync(1);
         }
 
-        private static string ExtractSsrDataObject(string html)
+        private sealed class WorkshopSsrPage
         {
-            var m = Regex.Match(html, @"{\\""data\\"":{\\""eresult\\""", RegexOptions.Singleline);
-            if (!m.Success) return null;
-
-            int start = m.Index;
-            int braceDepth = 0;
-            int bracketDepth = 0;
-            bool inStr = false;
-            int end = start;
-            for (; end < html.Length; end++)
-            {
-                char c = html[end];
-                if (c == '\\') { end++; continue; }
-                if (c == '"') { inStr = !inStr; continue; }
-                if (!inStr)
-                {
-                    if (c == '{') braceDepth++;
-                    else if (c == '}') braceDepth--;
-                    else if (c == '[') bracketDepth++;
-                    else if (c == ']') bracketDepth--;
-                }
-                if (braceDepth == 0 && bracketDepth == 0 && end > start)
-                    break;
-            }
-            return (end < html.Length) ? html.Substring(start, end - start + 1) : null;
+            public int CurrentPage { get; init; }
+            public int TotalPages { get; init; }
+            public int? TotalCount { get; init; }
+            public List<SteamMod> Mods { get; init; } = new();
         }
 
-        private static (int currentPage, int totalPages, int totalCount) ParseSsrPagination(string html, int currentPageFallback)
+        /// <summary>
+        /// 从页面序列化的 SSR 数据读取稳定字段，避免依赖动态生成的 CSS 类名。
+        /// </summary>
+        private static WorkshopSsrPage ParseWorkshopSsrPage(string html, int currentPageFallback)
         {
-            string data = ExtractSsrDataObject(html);
-            if (data == null) return (currentPageFallback, 1, 0);
-            data = data.Replace("\\\"", "\"");
-            try
-            {
-                using var doc = JsonDocument.Parse(data);
-                int cp = currentPageFallback, tp = 1, tc = 0;
-                var root = doc.RootElement;
-                if (root.TryGetProperty("data", out var dataObj))
-                {
-                    if (dataObj.TryGetProperty("current_page", out var c)) cp = c.GetInt32();
-                    if (dataObj.TryGetProperty("total_pages", out var t)) tp = t.GetInt32();
-                    if (dataObj.TryGetProperty("total_count", out var tcProp)) tc = tcProp.GetInt32();
-                }
-                return (cp, tp, tc);
-            }
-            catch { return (currentPageFallback, 1, 0); }
-        }
+            static Match MatchField(string source, string name) => Regex.Match(
+                source,
+                $@"\\*""{Regex.Escape(name)}\\*""\s*:\s*(?:\\*"")?(?<value>\d+)(?:\\*"")?",
+                RegexOptions.Singleline);
 
-        public static List<SteamMod> ParseModsFromHtml(string html)
-        {
+            int ReadInt(string name, int fallback)
+            {
+                var match = MatchField(html, name);
+                return match.Success && int.TryParse(match.Groups["value"].Value, out int value)
+                    ? value
+                    : fallback;
+            }
+
+            string ReadString(string source, string name)
+            {
+                var match = Regex.Match(
+                    source,
+                    $@"\\*""{Regex.Escape(name)}\\*""\s*:\s*\\*""(?<value>.*?)\\*""",
+                    RegexOptions.Singleline);
+                return match.Success
+                    ? HttpUtility.HtmlDecode(Regex.Unescape(match.Groups["value"].Value))
+                    : "";
+            }
+
+            var idMatches = Regex.Matches(
+                html,
+                @"\\*""publishedfileid\\*""\s*:\s*\\*""(?<id>\d+)\\*""",
+                RegexOptions.Singleline);
             var mods = new List<SteamMod>();
-            string panelStartTag = "<div class=\"UNowfeldbNg- Panel\">";
-            int searchFrom = 0;
-
-            while (true)
+            for (int i = 0; i < idMatches.Count; i++)
             {
-                int start = html.IndexOf(panelStartTag, searchFrom, StringComparison.Ordinal);
-                if (start < 0) break;
-
-                // Count balanced <div> and </div> to find the matching closing tag
-                int depth = 1;
-                int end = start + panelStartTag.Length;
-
-                for (; end < html.Length && depth > 0; end++)
+                var idMatch = idMatches[i];
+                int recordEnd = i + 1 < idMatches.Count ? idMatches[i + 1].Index : html.Length;
+                string record = html.Substring(idMatch.Index, recordEnd - idMatch.Index);
+                string creator = ReadString(record, "creator");
+                mods.Add(new SteamMod
                 {
-                    if (html[end] == '<')
-                    {
-                        if (end + 6 <= html.Length &&
-                            html[end + 1] == '/' &&
-                            char.ToLowerInvariant(html[end + 2]) == 'd' &&
-                            char.ToLowerInvariant(html[end + 3]) == 'i' &&
-                            char.ToLowerInvariant(html[end + 4]) == 'v' &&
-                            html[end + 5] == '>')
-                        {
-                            depth--;
-                            end += 5;
-                        }
-                        else
-                        {
-                            int gtPos = html.IndexOf('>', end + 1);
-                            if (gtPos > end)
-                            {
-                                // Extract tag name
-                                int tagNameEnd = end + 1;
-                                while (tagNameEnd < gtPos &&
-                                       !char.IsWhiteSpace(html[tagNameEnd]) &&
-                                       html[tagNameEnd] != '>')
-                                    tagNameEnd++;
-                                string tagName = html.Substring(end + 1, tagNameEnd - end - 1);
-
-                                if (string.Equals(tagName, "div", StringComparison.OrdinalIgnoreCase) &&
-                                    gtPos > 0 && html[gtPos - 1] != '/')
-                                {
-                                    depth++;
-                                }
-                                end = gtPos;
-                            }
-                        }
-                    }
-                }
-                if (depth != 0) break;
-
-                string panelContent = html.Substring(start, end - start);
-                var mod = ParseModFromPanel(panelContent);
-                if (mod != null) 
-                    mods.Add(mod);
-
-                searchFrom = end;
+                    Id = idMatch.Groups["id"].Value,
+                    Title = ReadString(record, "title"),
+                    Author = creator,
+                    AuthorUrl = string.IsNullOrWhiteSpace(creator) ? "" : $"https://steamcommunity.com/profiles/{creator}",
+                    PreviewImage = ReadString(record, "preview_url")
+                });
             }
-            return mods;
-        }
 
-        private static SteamMod ParseModFromPanel(string panelContent)
-        {
-            // Extract mod ID from URL ?id=XXXX
-            var idMatch = Regex.Match(panelContent, @"\?id=(\d+)");
-            if (!idMatch.Success) return null;
-            string modId = idMatch.Groups[1].Value;
+            var totalCountMatch = MatchField(html, "total_count");
+            int? totalCount = totalCountMatch.Success &&
+                              int.TryParse(totalCountMatch.Groups["value"].Value, out int parsedCount) &&
+                              parsedCount >= 0
+                ? parsedCount
+                : null;
 
-            // Extract title from _3rvey4VpXts- div
-            var titleMatch = Regex.Match(panelContent,
-                @"<div\s+class=""Sw3NXcvOA4Y-"">\s*<a\s+href=""[^""]*"">(.*?)</a>",
-                RegexOptions.Singleline);
-            string title = titleMatch.Success
-                ? HttpUtility.HtmlDecode(titleMatch.Groups[1].Value.Trim())
-                : "";
-
-            // Extract author name + author URL from CmHGWYJjMk0- div
-            var authorMatch = Regex.Match(panelContent,
-                @"<div\s+class=""o14JIlvi52E-"">\s*<a\s+href=""([^""]*)"">By\s+(.*?)</a>",
-                RegexOptions.Singleline);
-            string author = authorMatch.Success
-                ? HttpUtility.HtmlDecode(authorMatch.Groups[2].Value.Trim())
-                : "";
-            string authorUrl = authorMatch.Success ? authorMatch.Groups[1].Value.Trim() : "";
-
-            // Extract preview image URL from <img src="...">
-            var imgMatch = Regex.Match(panelContent,
-                @"<img\s+[^>]*src=""([^""]*)""",
-                RegexOptions.Singleline);
-            string previewImage = imgMatch.Success
-                ? HttpUtility.HtmlDecode(imgMatch.Groups[1].Value.Trim())
-                : "";
-
-            return new SteamMod
+            return new WorkshopSsrPage
             {
-                Id = modId,
-                Title = title,
-                Author = author,
-                AuthorUrl = authorUrl,
-                PreviewImage = previewImage
+                CurrentPage = ReadInt("current_page", currentPageFallback),
+                TotalPages = ReadInt("total_pages", 1),
+                TotalCount = totalCount,
+                Mods = mods.GroupBy(mod => mod.Id).Select(group => group.First()).ToList()
             };
         }
+        public static List<SteamMod> ParseModsFromHtml(string html)
+        {
+            var linkMatches = Regex.Matches(
+                html,
+                @"<a\b[^>]*href=""[^""]*[?&]id=(?<id>\d+)[^""]*""[^>]*>",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+            // Each card may contain multiple links to the same workshop item. Keep the first
+            // link for each consecutive item and parse only up to the next item's link.
+            var cardStarts = new List<(string Id, int Index)>();
+            string previousId = null;
+            foreach (Match link in linkMatches)
+            {
+                string id = link.Groups["id"].Value;
+                if (id == previousId) continue;
+                cardStarts.Add((id, link.Index));
+                previousId = id;
+            }
+
+            var mods = new List<SteamMod>();
+            for (int i = 0; i < cardStarts.Count; i++)
+            {
+                int start = cardStarts[i].Index;
+                int end = i + 1 < cardStarts.Count ? cardStarts[i + 1].Index : html.Length;
+                string card = html.Substring(start, end - start);
+
+                var authorMatch = Regex.Match(
+                    card,
+                    @"<a\s+[^>]*href=""(?<url>[^""]*)""[^>]*>\s*By\s+(?<name>.*?)</a>",
+                    RegexOptions.Singleline | RegexOptions.IgnoreCase);
+                string author = authorMatch.Success
+                    ? HttpUtility.HtmlDecode(Regex.Replace(authorMatch.Groups["name"].Value, "<[^>]+>", "").Trim())
+                    : "";
+                string authorUrl = authorMatch.Success
+                    ? HttpUtility.HtmlDecode(authorMatch.Groups["url"].Value.Trim())
+                    : "";
+
+                string title = "";
+                foreach (Match titleLink in Regex.Matches(
+                             card,
+                             @"<a\b[^>]*href=""[^""]*[?&]id=" + Regex.Escape(cardStarts[i].Id) + @"[^""]*""[^>]*>(?<content>.*?)</a>",
+                             RegexOptions.Singleline | RegexOptions.IgnoreCase))
+                {
+                    string candidate = HttpUtility.HtmlDecode(Regex.Replace(titleLink.Groups["content"].Value, "<[^>]+>", "").Trim());
+                    if (!string.IsNullOrWhiteSpace(candidate))
+                    {
+                        title = candidate;
+                        break;
+                    }
+                }
+
+                var imageMatch = Regex.Match(card, @"<img\s+[^>]*src=""(?<src>[^""]*)""", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+                mods.Add(new SteamMod
+                {
+                    Id = cardStarts[i].Id,
+                    Title = title,
+                    Author = author,
+                    AuthorUrl = authorUrl,
+                    PreviewImage = imageMatch.Success ? HttpUtility.HtmlDecode(imageMatch.Groups["src"].Value.Trim()) : ""
+                });
+            }
+
+            return mods.GroupBy(mod => mod.Id).Select(group => group.First()).ToList();
+        }
+        private static bool IsSteamId(string value) => Regex.IsMatch(value ?? "", @"^\d{17}$");
 
         public static List<SteamMod> ParseAuthorMods(string html)
         {
@@ -375,6 +397,13 @@ namespace SoulmaskServerManager
                 var modInList = _allMods.FirstOrDefault(m => m.Id == modId);
                 if (modInList == null) return;
 
+                if (detail.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String)
+                    modInList.Title = title.GetString() ?? modInList.Title;
+                if (detail.TryGetProperty("preview_url", out var preview) && preview.ValueKind == JsonValueKind.String)
+                    modInList.PreviewImage = preview.GetString() ?? modInList.PreviewImage;
+                if (detail.TryGetProperty("creator", out var creator) && creator.ValueKind == JsonValueKind.String &&
+                    string.IsNullOrWhiteSpace(modInList.AuthorUrl))
+                    modInList.AuthorUrl = $"https://steamcommunity.com/profiles/{creator.GetString()}";
                 if (detail.TryGetProperty("subscriptions", out var subs))
                 {
                     modInList.Subscriptions = subs.GetInt32();
@@ -389,15 +418,11 @@ namespace SoulmaskServerManager
 
                 ct.ThrowIfCancellationRequested();
 
-                // Update detail panel on UI thread (preview image not changed - keep from HTML parsing)
+                // Refresh the selected mod's complete detail panel with the API response.
                 Dispatcher.Invoke(() =>
                 {
-                    ModSubsText.Text = modInList.Subscriptions > 0
-                        ? modInList.Subscriptions.ToString("N0")
-                        : "";
-
-                    BuildDescriptionText(modInList.Description ?? "");
-
+                    if (dgMods.SelectedItem is SteamMod selected && selected.Id == modInList.Id)
+                        ShowModDetails(modInList);
                     dgMods.Items.Refresh();
                 });
             }
@@ -491,6 +516,13 @@ namespace SoulmaskServerManager
 
         private async Task LoadPageAsync(int page)
         {
+            _pageLoadCts?.Cancel();
+            _pageLoadCts?.Dispose();
+            var requestCts = new CancellationTokenSource();
+            _pageLoadCts = requestCts;
+            int requestId = Interlocked.Increment(ref _pageLoadRequestId);
+            CancellationToken cancellationToken = requestCts.Token;
+
             btnPrev.IsEnabled = false;
             btnNext.IsEnabled = false;
             txtStatus.Text = $"正在加载第 {page} 页...";
@@ -506,17 +538,49 @@ namespace SoulmaskServerManager
                 else
                     url = $"https://steamcommunity.com/workshop/browse/?appid={AppId}&browsesort=toprated&section=readytouseitems&p={page}&num_per_page=30";
 
-                string html = await _http.GetStringAsync(url);
-                var mods = ParseModsFromHtml(html);
+                string html = await GetWorkshopHtmlAsync(url, cancellationToken);
+#if DEBUG
+                ExportDebugHtml(html, page);
+#endif
+                ValidateWorkshopHtml(html);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (requestId != Volatile.Read(ref _pageLoadRequestId)) return;
+
+                var ssrPage = ParseWorkshopSsrPage(html, page);
+                var parsedCards = ParseModsFromHtml(html)
+                    .GroupBy(mod => mod.Id)
+                    .ToDictionary(group => group.Key, group => group.First());
+
+                // SSR 结果对象是主数据源；页面卡片仅在 SSR 字段缺失时补充信息。
+                var mods = ssrPage.Mods.Count > 0
+                    ? ssrPage.Mods.Select(mod =>
+                    {
+                        if (parsedCards.TryGetValue(mod.Id, out var card))
+                        {
+                            if (string.IsNullOrWhiteSpace(mod.Title)) mod.Title = card.Title;
+                            if (string.IsNullOrWhiteSpace(mod.Author) || IsSteamId(mod.Author))
+                            {
+                                if (!string.IsNullOrWhiteSpace(card.Author) && !IsSteamId(card.Author))
+                                    mod.Author = card.Author;
+                            }
+                            if (string.IsNullOrWhiteSpace(mod.AuthorUrl)) mod.AuthorUrl = card.AuthorUrl;
+                            if (string.IsNullOrWhiteSpace(mod.PreviewImage)) mod.PreviewImage = card.PreviewImage;
+                        }
+                        return mod;
+                    }).ToList()
+                    : parsedCards.Values.ToList();
                 _allMods = mods;
                 dgMods.ItemsSource = mods;
+                SelectFirstMod();
 
-                var (cp, tp, tc) = ParseSsrPagination(html, page);
-                _totalPage = tp > 1 ? tp : ParseTotalPageCount(html);
-                _currentPage = cp > 0 ? cp : page;
-                _totalModCount = tc;
+                _totalPage = ssrPage.TotalPages > 1 ? ssrPage.TotalPages : ParseTotalPageCount(html);
+                _currentPage = ssrPage.CurrentPage > 0 ? ssrPage.CurrentPage : page;
+                _totalModCount = ssrPage.TotalCount;
 
-                txtPageInfo.Text = $"第 {_currentPage} 页 / 共 {_totalPage} 页（共 {_totalModCount} 个Mod）";
+                string totalText = _totalModCount.HasValue
+                    ? $"共 {_totalModCount.Value} 个Mod"
+                    : $"本页 {mods.Count} 个Mod，总数暂不可用";
+                txtPageInfo.Text = $"第 {_currentPage} 页 / 共 {_totalPage} 页（{totalText}）";
                 txtStatus.Text = $"加载完成：第 {_currentPage} 页，共 {mods.Count} 个Mod";
 
                 AutoCheckSubscribedMods(mods);
@@ -524,20 +588,63 @@ namespace SoulmaskServerManager
             }
             catch (Exception ex)
             {
+                if (ex is OperationCanceledException || requestId != Volatile.Read(ref _pageLoadRequestId))
+                    return;
+
                 txtStatus.Text = "加载失败";
                 _ = new ContentDialog
                 {
                     Title = "加载失败",
-                    Content = $"加载第 {page} 页失败：{ex.Message}\n\n提示：Steam Workshop 需要网络加速器（如 Watt Toolkit）才能正常访问。",
+                    Content = $"加载第 {page} 页失败：{ex.Message}",
                     CloseButtonText = "确定",
                     DefaultButton = ContentDialogButton.Close
                 }.ShowAsync();
             }
             finally
             {
-                btnPrev.IsEnabled = _currentPage > 1;
-                btnNext.IsEnabled = _currentPage < _totalPage;
+                if (requestId == Volatile.Read(ref _pageLoadRequestId))
+                {
+                    btnPrev.IsEnabled = _currentPage > 1;
+                    btnNext.IsEnabled = _currentPage < _totalPage;
+                    _pageLoadCts = null;
+                    requestCts.Dispose();
+                }
             }
+        }
+
+        private static async Task<string> GetWorkshopHtmlAsync(string url, CancellationToken cancellationToken)
+        {
+            using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseContentRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"Steam Workshop 返回 HTTP {(int)response.StatusCode} ({response.ReasonPhrase})。", null, response.StatusCode);
+
+            string html = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(html))
+                throw new InvalidDataException("Steam Workshop 返回了空页面。");
+
+            return html;
+        }
+
+        private static void ValidateWorkshopHtml(string html)
+        {
+            string normalized = html.ToLowerInvariant();
+            string[] errorMarkers =
+            {
+                "<title>steam community :: error</title>",
+                "<title>sign in</title>",
+                "verify you are human",
+                "unusual traffic",
+                "<title>access denied",
+                "id=\"captcha\"",
+                "class=\"g-recaptcha\""
+            };
+            string matchedMarker = errorMarkers.FirstOrDefault(normalized.Contains);
+            if (matchedMarker != null)
+                throw new InvalidDataException($"Steam Workshop 返回了验证、登录或错误页面（检测到：{matchedMarker}）。");
+
+            var page = ParseWorkshopSsrPage(html, 1);
+            if (page.Mods.Count == 0 && !Regex.IsMatch(html, @"<a\b[^>]*href=""[^""]*[?&]id=\d+", RegexOptions.IgnoreCase))
+                throw new InvalidDataException("返回内容中没有找到 Workshop 列表数据，可能是作者隐私私密状态、登录页、验证页或页面结构已变化。");
         }
 
         private void AutoCheckSubscribedMods(IEnumerable<SteamMod> currentMods)
@@ -571,8 +678,8 @@ namespace SoulmaskServerManager
 
         private int ParseTotalPageCount(string html)
         {
-            var (_, tp, _) = ParseSsrPagination(html, 1);
-            if (tp > 1) return tp;
+            int ssrPages = ParseWorkshopSsrPage(html, 1).TotalPages;
+            if (ssrPages > 1) return ssrPages;
 
             try
             {
@@ -587,60 +694,121 @@ namespace SoulmaskServerManager
             }
         }
 
-        private static void ExportDebugHtml(string html)
+#if DEBUG
+        private static void ExportDebugHtml(string html, int page)
         {
             try
             {
                 string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Debug");
                 Directory.CreateDirectory(dir);
-
-                string formatted = html.Replace("</", "\n</").Replace("><", ">\n<");
-                File.WriteAllText(Path.Combine(dir, "workshop_debug.html"), formatted, Encoding.UTF8);
-
-                string raw = ExtractSsrDataObject(html);
-                if (raw != null)
-                {
-                    raw = raw.Replace("\\", "");
-                    raw = raw.Replace("{", "\n{\n");
-                    raw = raw.Replace("}", "\n}\n");
-                    raw = raw.Replace("[", "\n[\n");
-                    raw = raw.Replace("]", "\n]\n");
-                    raw = raw.Replace(",", ",\n");
-                    var lines = raw.Split('\n');
-                    var sb = new StringBuilder();
-                    int indent = 0;
-                    foreach (var line in lines)
-                    {
-                        string trimmed = line.Trim();
-                        if (string.IsNullOrEmpty(trimmed)) continue;
-                        if (trimmed.StartsWith("}") || trimmed.StartsWith("]"))
-                            indent = Math.Max(0, indent - 1);
-                        sb.Append(new string(' ', indent * 4));
-                        sb.AppendLine(trimmed);
-                        if (trimmed.EndsWith("{") || trimmed.EndsWith("["))
-                            indent++;
-                    }
-                    File.WriteAllText(Path.Combine(dir, "workshop_ssr.json"), sb.ToString(), Encoding.UTF8);
-                }
+                string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+                string prefix = $"workshop_page_{stamp}_p{page}";
+                File.WriteAllText(Path.Combine(dir, $"{prefix}_raw.html"), html, Encoding.UTF8);
+                File.WriteAllText(Path.Combine(dir, $"{prefix}_backslashes_removed.html"), html.Replace("\\", ""), Encoding.UTF8);
             }
-            catch
-            {
-            }
+            catch (Exception ex) { Debug.WriteLine($"导出 Workshop 调试页面失败：{ex}"); }
         }
+#endif
 
         private void SafeCopyToClipboard(string text)
         {
-            try
-            {
-                System.Windows.IDataObject data = new DataObject(DataFormats.UnicodeText, text);
-                System.Windows.Clipboard.SetDataObject(data, copy: true);
+            if (string.IsNullOrWhiteSpace(text))
                 return;
-            }
-            catch (System.Runtime.InteropServices.COMException ex) when (ex.HResult == -2147221040) 
+
+            // Clipboard calls can block when another process owns the clipboard.
+            // Use the native Win32 clipboard API on an STA worker so the UI stays responsive.
+            IntPtr ownerHandle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            var clipboardThread = new Thread(() =>
             {
-                //System.Threading.Thread.Sleep(50);
-            }
+                const int maxOpenAttempts = 10;
+                for (int attempt = 0; attempt < maxOpenAttempts; attempt++)
+                {
+                    if (!OpenClipboard(ownerHandle))
+                    {
+                        Thread.Sleep(40 + attempt * 30);
+                        continue;
+                    }
+
+                    IntPtr globalMemory = IntPtr.Zero;
+                    try
+                    {
+                        if (!EmptyClipboard())
+                            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+
+                        byte[] unicodeText = Encoding.Unicode.GetBytes(text + '\0');
+                        globalMemory = GlobalAlloc(GmemMoveable, (UIntPtr)unicodeText.Length);
+                        if (globalMemory == IntPtr.Zero)
+                            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+
+                        IntPtr memoryPointer = GlobalLock(globalMemory);
+                        if (memoryPointer == IntPtr.Zero)
+                            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+
+                        try
+                        {
+                            Marshal.Copy(unicodeText, 0, memoryPointer, unicodeText.Length);
+                        }
+                        finally
+                        {
+                            GlobalUnlock(globalMemory);
+                        }
+
+                        if (SetClipboardData(CfUnicodeText, globalMemory) == IntPtr.Zero)
+                            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+
+                        // Windows now owns the global memory block.
+                        globalMemory = IntPtr.Zero;
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"复制文本到剪贴板失败：{ex}");
+                        return;
+                    }
+                    finally
+                    {
+                        if (globalMemory != IntPtr.Zero)
+                            GlobalFree(globalMemory);
+                        CloseClipboard();
+                    }
+                }
+
+                Debug.WriteLine("复制文本到剪贴板失败：剪贴板持续被其他进程占用。");
+            })
+            {
+                IsBackground = true,
+                Name = "ModManagerClipboardWriter"
+            };
+            clipboardThread.SetApartmentState(ApartmentState.STA);
+            clipboardThread.Start();
         }
+
+        private const uint GmemMoveable = 0x0002;
+        private const uint CfUnicodeText = 13;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool OpenClipboard(IntPtr newOwner);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool EmptyClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetClipboardData(uint format, IntPtr memory);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool CloseClipboard();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalLock(IntPtr memory);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GlobalUnlock(IntPtr memory);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalFree(IntPtr memory);
 
         private async void RefreshInstalledModGridAsync()
         {
@@ -753,16 +921,36 @@ namespace SoulmaskServerManager
                 if (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
                     Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance)
                 {
-                    _isDragging = true;
                     _originalIndex = mods.IndexOf(_draggedMod);
-
-                    if (_originalIndex != -1)
+                    if (_originalIndex < 0)
                     {
-                        mods.RemoveAt(_originalIndex);
+                        ResetInstalledModDragState();
+                        return;
+                    }
+
+                    _isDragging = true;
+                    _dropCompleted = false;
+                    mods.RemoveAt(_originalIndex);
+                    try
+                    {
                         DragDrop.DoDragDrop(installedMods, _draggedMod, DragDropEffects.Move);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Mod 排序拖放失败：{ex}");
+                    }
+                    finally
+                    {
+                        CompleteInstalledModDrag(mods);
                     }
                 }
             }
+        }
+
+        private void InstalledMods_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_isDragging && installedMods.ItemsSource is ObservableCollection<InstalledModViewModel> mods)
+                CompleteInstalledModDrag(mods);
         }
 
         private void InstalledMods_DragOver(object sender, DragEventArgs e)
@@ -772,80 +960,156 @@ namespace SoulmaskServerManager
                 installedMods.ItemsSource is ObservableCollection<InstalledModViewModel> mods)
             {
                 Point point = e.GetPosition(installedMods);
-                InstalledModViewModel targetMod = GetDataGridItemFromPoint(point) as InstalledModViewModel;
-
-                int insertIndex = 0;
-
-                if (targetMod != null)
-                {
-                    insertIndex = mods.IndexOf(targetMod);
-                    DataGridRow row = GetDataGridRowFromPoint(point);
-                    if (row != null)
-                    {
-                        Point rowPoint = e.GetPosition(row);
-                        if (rowPoint.Y > row.ActualHeight)
-                        {
-                            insertIndex++;
-                        }
-                    }
-                }
-                else if(point.Y < 5)
-                {
-                    //insertIndex = 0;
-                }
-                else
-                {
-                    //insertIndex = mods.Count;
-                }
-
-                _finalInsertIndex = insertIndex;
-
-                UpdatePlaceholder(insertIndex, mods);
+                _lastDragPosition = point;
+                UpdateInstalledModDropTarget(point, mods);
+                UpdateInstalledModAutoScroll(point);
+                e.Effects = DragDropEffects.Move;
+                e.Handled = true;
             }
+        }
+
+        private void UpdateInstalledModDropTarget(Point point, ObservableCollection<InstalledModViewModel> mods)
+        {
+            DataGridRow targetRow = GetDataGridRowFromPoint(point);
+            InstalledModViewModel targetMod = targetRow?.Item as InstalledModViewModel;
+            int placeholderIndex = _placeholderMod == null ? -1 : mods.IndexOf(_placeholderMod);
+            int insertIndex;
+
+            if (targetMod == _placeholderMod && placeholderIndex >= 0)
+            {
+                insertIndex = placeholderIndex;
+            }
+            else if (targetMod != null && targetRow != null)
+            {
+                insertIndex = mods.IndexOf(targetMod);
+                if (placeholderIndex >= 0 && placeholderIndex < insertIndex)
+                    insertIndex--;
+
+                Point rowPoint = Mouse.GetPosition(targetRow);
+                if (rowPoint.Y >= targetRow.ActualHeight / 2)
+                    insertIndex++;
+            }
+            else
+            {
+                var rows = FindVisualChildren<DataGridRow>(installedMods)
+                    .Where(row => row.Item is InstalledModViewModel item && !item.IsPlaceholder)
+                    .ToList();
+                double lastRowBottom = rows.Count == 0
+                    ? 0
+                    : rows.Max(row => row.TransformToAncestor(installedMods).Transform(new Point(0, 0)).Y + row.ActualHeight);
+                insertIndex = point.Y >= lastRowBottom
+                    ? mods.Count - (placeholderIndex >= 0 ? 1 : 0)
+                    : 0;
+            }
+
+            _finalInsertIndex = insertIndex;
+            UpdatePlaceholder(insertIndex, mods);
+        }
+
+        private void UpdateInstalledModAutoScroll(Point point)
+        {
+            const double edgeSize = 44;
+            _dragAutoScrollDirection = point.Y < edgeSize
+                ? -1
+                : point.Y > installedMods.ActualHeight - edgeSize ? 1 : 0;
+
+            if (_dragAutoScrollDirection == 0)
+                _dragAutoScrollTimer.Stop();
+            else if (!_dragAutoScrollTimer.IsEnabled)
+                _dragAutoScrollTimer.Start();
+        }
+
+        private void InstalledMods_DragAutoScrollTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!_isDragging || _dragAutoScrollDirection == 0 ||
+                installedMods.ItemsSource is not ObservableCollection<InstalledModViewModel> mods)
+            {
+                _dragAutoScrollTimer.Stop();
+                return;
+            }
+
+            ScrollViewer scrollViewer = FindVisualChildren<ScrollViewer>(installedMods).FirstOrDefault();
+            if (scrollViewer == null)
+            {
+                _dragAutoScrollTimer.Stop();
+                return;
+            }
+
+            double newOffset = Math.Max(0, Math.Min(
+                scrollViewer.ScrollableHeight,
+                scrollViewer.VerticalOffset + _dragAutoScrollDirection));
+            if (Math.Abs(newOffset - scrollViewer.VerticalOffset) < 0.1)
+            {
+                _dragAutoScrollTimer.Stop();
+                return;
+            }
+
+            scrollViewer.ScrollToVerticalOffset(newOffset);
+            UpdateInstalledModDropTarget(_lastDragPosition, mods);
         }
 
         private void InstalledMods_Drop(object sender, DragEventArgs e)
         {
             if (!_isDragging) return;
 
-            try
+            if (e.Data.GetDataPresent(typeof(InstalledModViewModel)) &&
+                installedMods.ItemsSource is ObservableCollection<InstalledModViewModel> mods &&
+                e.Data.GetData(typeof(InstalledModViewModel)) is InstalledModViewModel droppedMod &&
+                droppedMod == _draggedMod)
             {
-                if (e.Data.GetDataPresent(typeof(InstalledModViewModel)) &&
-                    installedMods.ItemsSource is ObservableCollection<InstalledModViewModel> mods)
-                {
-                    RemovePlaceholder(mods);
+                RemovePlaceholder(mods);
+                int newIndex = _finalInsertIndex;
+                if (newIndex < 0 || newIndex > mods.Count)
+                    newIndex = _originalIndex;
 
-                    InstalledModViewModel droppedMod = e.Data.GetData(typeof(InstalledModViewModel)) as InstalledModViewModel;
-
-                    if (droppedMod != null && droppedMod == _draggedMod)
-                    {
-                        int newIndex = _finalInsertIndex;
-
-                        if (newIndex < 0 || newIndex > mods.Count)
-                        {
-                            newIndex = _originalIndex;
-                        }
-
-                        newIndex = Math.Max(0, Math.Min(newIndex, mods.Count));
-                        mods.Insert(newIndex, droppedMod);
-                    }
-                }
+                newIndex = Math.Max(0, Math.Min(newIndex, mods.Count));
+                mods.Insert(newIndex, droppedMod);
+                _dropCompleted = true;
+                e.Effects = DragDropEffects.Move;
             }
-            finally
+            else
+                e.Effects = DragDropEffects.None;
+
+            e.Handled = true;
+        }
+
+        private void CompleteInstalledModDrag(ObservableCollection<InstalledModViewModel> mods)
+        {
+            RemovePlaceholder(mods);
+            if (!_dropCompleted && _draggedMod != null && !mods.Contains(_draggedMod))
             {
-                // 重置所有
-                _isDragging = false;
-                _draggedMod = null;
-                _originalIndex = -1;
-                _finalInsertIndex = -1;
+                int restoreIndex = Math.Max(0, Math.Min(_originalIndex, mods.Count));
+                mods.Insert(restoreIndex, _draggedMod);
             }
+
+            ResetInstalledModDragState();
+        }
+
+        private void ResetInstalledModDragState()
+        {
+            _dragAutoScrollTimer.Stop();
+            _dragAutoScrollDirection = 0;
+            _isDragging = false;
+            _dropCompleted = false;
+            _draggedMod = null;
+            _originalIndex = -1;
+            _finalInsertIndex = -1;
+            _placeholderMod = null;
+            _lastPlaceholderIndex = -1;
         }
 
         private void UpdatePlaceholder(int insertIndex, ObservableCollection<InstalledModViewModel> mods)
         {
-            RemovePlaceholder(mods);
-
             if (_draggedMod == null) return;
+
+            insertIndex = Math.Max(0, Math.Min(insertIndex, Math.Max(0, mods.Count - (_placeholderMod == null ? 0 : 1))));
+            if (_placeholderMod != null &&
+                mods.Contains(_placeholderMod) &&
+                insertIndex == _lastPlaceholderIndex)
+                return;
+
+            Dictionary<InstalledModViewModel, double> previousPositions = CaptureInstalledModRowPositions();
+            RemovePlaceholder(mods);
 
             _placeholderMod = new InstalledModViewModel
             {
@@ -857,6 +1121,95 @@ namespace SoulmaskServerManager
             insertIndex = Math.Max(0, Math.Min(insertIndex, mods.Count));
             mods.Insert(insertIndex, _placeholderMod);
             _lastPlaceholderIndex = insertIndex;
+
+            installedMods.UpdateLayout();
+            AnimateInstalledModRows(previousPositions);
+        }
+
+        private Dictionary<InstalledModViewModel, double> CaptureInstalledModRowPositions()
+        {
+            var positions = new Dictionary<InstalledModViewModel, double>();
+            foreach (DataGridRow row in FindVisualChildren<DataGridRow>(installedMods))
+            {
+                if (row.Item is not InstalledModViewModel item || item.IsPlaceholder)
+                    continue;
+
+                if (row.RenderTransform is TranslateTransform translate)
+                {
+                    translate.BeginAnimation(TranslateTransform.YProperty, null);
+                    translate.Y = 0;
+                }
+
+                try
+                {
+                    positions[item] = row.TransformToAncestor(installedMods).Transform(new Point(0, 0)).Y;
+                }
+                catch (InvalidOperationException)
+                {
+                    // Ignore a row that is being virtualized while the drag is moving.
+                }
+            }
+
+            return positions;
+        }
+
+        private void AnimateInstalledModRows(Dictionary<InstalledModViewModel, double> previousPositions)
+        {
+            if (previousPositions.Count == 0)
+                return;
+
+            foreach (DataGridRow row in FindVisualChildren<DataGridRow>(installedMods))
+            {
+                if (row.Item is not InstalledModViewModel item ||
+                    item.IsPlaceholder ||
+                    !previousPositions.TryGetValue(item, out double previousY))
+                    continue;
+
+                double currentY;
+                try
+                {
+                    currentY = row.TransformToAncestor(installedMods).Transform(new Point(0, 0)).Y;
+                }
+                catch (InvalidOperationException)
+                {
+                    continue;
+                }
+
+                double offset = previousY - currentY;
+                if (Math.Abs(offset) < 1)
+                    continue;
+
+                if (row.RenderTransform is not TranslateTransform translate)
+                {
+                    translate = new TranslateTransform();
+                    row.RenderTransform = translate;
+                }
+
+                translate.BeginAnimation(TranslateTransform.YProperty, null);
+                translate.Y = 0;
+                var animation = new DoubleAnimation
+                {
+                    From = offset,
+                    To = 0,
+                    Duration = TimeSpan.FromMilliseconds(200),
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                };
+                translate.BeginAnimation(TranslateTransform.YProperty, animation, HandoffBehavior.SnapshotAndReplace);
+            }
+        }
+
+        private static IEnumerable<T> FindVisualChildren<T>(DependencyObject parent) where T : DependencyObject
+        {
+            int childCount = VisualTreeHelper.GetChildrenCount(parent);
+            for (int i = 0; i < childCount; i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(parent, i);
+                if (child is T target)
+                    yield return target;
+
+                foreach (T descendant in FindVisualChildren<T>(child))
+                    yield return descendant;
+            }
         }
 
         private void RemovePlaceholder(ObservableCollection<InstalledModViewModel> mods)
@@ -1114,19 +1467,42 @@ namespace SoulmaskServerManager
         private async void ShowOnlyThisAuthor_Click(object sender, RoutedEventArgs e)
         {
             if (dgMods.SelectedItem is not SteamMod mod) return;
-            if (string.IsNullOrWhiteSpace(mod.AuthorUrl)) return;
+            string authorUrl = BuildAuthorWorkshopUrl(mod);
+            if (string.IsNullOrWhiteSpace(authorUrl))
+            {
+                _ = new ContentDialog
+                {
+                    Title = "无法打开作者页面",
+                    Content = "当前 Mod 没有可用的作者 SteamID。",
+                    CloseButtonText = "确定",
+                    DefaultButton = ContentDialogButton.Close
+                }.ShowAsync();
+                return;
+            }
 
-            string authorUrl = $"{mod.AuthorUrl}&p=1&numperpage=30";
+            _pageLoadCts?.Cancel();
+            _pageLoadCts?.Dispose();
+            var requestCts = new CancellationTokenSource();
+            _pageLoadCts = requestCts;
+            int requestId = Interlocked.Increment(ref _pageLoadRequestId);
+            CancellationToken cancellationToken = requestCts.Token;
 
             txtStatus.Text = $"正在加载 {mod.Author} 的所有MOD...";
 
             try
             {
-                string html = await _http.GetStringAsync(authorUrl);
+                string html = await GetWorkshopHtmlAsync(authorUrl, cancellationToken);
+#if DEBUG
+                ExportDebugHtml(html, 1);
+#endif
+                ValidateWorkshopHtml(html);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (requestId != Volatile.Read(ref _pageLoadRequestId)) return;
 
                 var mods = ParseAuthorMods(html);
                 _allMods = mods;
                 dgMods.ItemsSource = mods;
+                SelectFirstMod();
 
                 AutoCheckSubscribedMods(mods);
 
@@ -1134,6 +1510,9 @@ namespace SoulmaskServerManager
             }
             catch (Exception ex)
             {
+                if (ex is OperationCanceledException || requestId != Volatile.Read(ref _pageLoadRequestId))
+                    return;
+
                 _ = new ContentDialog
                 {
                     Title = "加载失败",
@@ -1144,7 +1523,25 @@ namespace SoulmaskServerManager
             }
             finally
             {
+                if (requestId == Volatile.Read(ref _pageLoadRequestId))
+                {
+                    _pageLoadCts = null;
+                    requestCts.Dispose();
+                }
             }
+        }
+
+        private static string BuildAuthorWorkshopUrl(SteamMod mod)
+        {
+            var match = Regex.Match(mod.AuthorUrl ?? "", @"/profiles/(?<steamId>\d{17})(?:/|$)", RegexOptions.IgnoreCase);
+            string steamId = match.Success
+                ? match.Groups["steamId"].Value
+                : IsSteamId(mod.Author) ? mod.Author : "";
+
+            if (string.IsNullOrWhiteSpace(steamId))
+                return "";
+
+            return $"https://steamcommunity.com/profiles/{steamId}/myworkshopfiles/?appid={AppId}&sort=score&browsefilter=myfiles&view=imagewall&p=1&numperpage=30";
         }
 
         private async void BtnPrev_Click(object sender, RoutedEventArgs e)

@@ -23,7 +23,7 @@ namespace SoulmaskServerManager
         public string EngineIniPath => Path.Combine(ConfigDir, "Engine.ini");
         public string GameplaySettingsPath => Path.Combine(SavedDir, "GameplaySettings", "GameXishu.json");     // 服务器自己创建的系数配置文件
         public string SaveDataSettingsDir => Path.Combine(ServerFilesDir, "SaveData", "Settings");
-        public string GameXishuDefaultPath => Path.Combine(SaveDataSettingsDir, "GameXishu_Default.json");
+        public string GameXishuDefaultPath => Path.Combine(SaveDataSettingsDir, "GameXishu_Custom.json");
         public string ServerExePath => Path.Combine(ServerFilesDir, "WS", "Binaries", "Win64", "WSServer-Win64-Shipping.exe");
         public string BanListPath => Path.Combine(SavedDir, "BlackAccountList.txt");
         public string MuteListPath => Path.Combine(SavedDir, "BanSpeek.txt");

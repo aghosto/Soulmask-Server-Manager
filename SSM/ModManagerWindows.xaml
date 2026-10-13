@@ -259,6 +259,7 @@
                                     RowHeaderWidth="0"
                                     AllowDrop="True"
                                     PreviewMouseLeftButtonDown="InstalledMods_PreviewMouseLeftButtonDown"
+                                    PreviewMouseRightButtonDown="InstalledMods_PreviewMouseRightButtonDown"
                                     MouseMove="InstalledMods_MouseMove"
                                     DragOver="InstalledMods_DragOver"
                                     Drop="InstalledMods_Drop">

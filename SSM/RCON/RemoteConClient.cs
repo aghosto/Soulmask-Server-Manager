@@ -490,6 +490,37 @@ namespace SoulmaskServerManager.RCON
             { }
         }
 
+        /// <summary>
+        /// 使用管理器中保存的 RCON 连接信息向服务器聊天频道发送一条消息。
+        /// </summary>
+        public Task<bool> SendRconMessageAsync(Server server, string message)
+        {
+            if (server == null || string.IsNullOrWhiteSpace(message))
+                return Task.FromResult(false);
+
+            string safeMessage = message.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (string.IsNullOrWhiteSpace(safeMessage))
+                return Task.FromResult(false);
+
+            string settingsPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
+            if (!File.Exists(settingsPath))
+                return Task.FromResult(false);
+
+            try
+            {
+                ServerSettings settings = ServerSettingsEditor.LoadServerSettings(settingsPath);
+                string host = string.IsNullOrWhiteSpace(settings.Rcon.IP) ? "127.0.0.1" : settings.Rcon.IP;
+                if (settings.Rcon.Port <= 0 || string.IsNullOrWhiteSpace(settings.Rcon.Password))
+                    return Task.FromResult(false);
+
+                return SendRestartAnnounceToSingleServer(host, settings.Rcon.Port, settings.Rcon.Password, safeMessage);
+            }
+            catch
+            {
+                return Task.FromResult(false);
+            }
+        }
+
         // 只有在游戏中踢人的指令，在游戏外只能通过先加入黑名单再把他从黑名单移除的方法模拟踢人操作
         public async Task<bool> KickPlayerAsync(string host, int port, string steamId)
         {

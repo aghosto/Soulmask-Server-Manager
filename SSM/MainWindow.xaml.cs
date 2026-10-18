@@ -113,6 +113,8 @@ public partial class MainWindow : Window
             SsmSettings = MainSettings.LoadManagerSettings();
             ServerIdMapping.EnsureAllServersHaveIds();
         }
+        if (SSMPathManager.MigrateLegacyServerDirectories(SsmSettings.Servers, Directory.GetCurrentDirectory()))
+            MainSettings.Save(SsmSettings);
         MigrateScheduledSettings();
         DataContext = SsmSettings;
 
@@ -3612,7 +3614,16 @@ public partial class MainWindow : Window
 
                 if (await yesNoDialog.ShowAsync() is ContentDialogResult.Primary)
                 {
-                    Process.Start("SSMUpdater.exe");
+                    string applicationDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                    var updaterStartInfo = new ProcessStartInfo
+                    {
+                        FileName = Path.Combine(applicationDirectory, "SSMUpdater.exe"),
+                        WorkingDirectory = applicationDirectory,
+                        UseShellExecute = true
+                    };
+                    updaterStartInfo.ArgumentList.Add("--wait-for-pid");
+                    updaterStartInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+                    Process.Start(updaterStartInfo);
                     Process.GetCurrentProcess().Kill();
                 }
                 else

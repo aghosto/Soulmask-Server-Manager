@@ -1,4 +1,4 @@
-﻿using ModernWpf.Controls;
+using ModernWpf.Controls;
 using SoulmaskServerManager;
 using System;
 using System.IO;
@@ -38,7 +38,8 @@ namespace SoulmaskServerManager
             if (suffix > 0)
             {
                 suffixStr = suffix.ToString();
-                newServer.Path = Directory.GetCurrentDirectory() + @"\Server" + suffixStr;
+                var paths = new SSMPathManager(Directory.GetCurrentDirectory(), newServer);
+                newServer.Path = Path.Combine(paths.ServersDir, "Server" + suffixStr);
             }
             newServer.ssmServerName = "灵魂面甲服务器" + suffixStr;
             DataContext = newServer;

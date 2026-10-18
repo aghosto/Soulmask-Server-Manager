@@ -9,12 +9,12 @@
 	<UseWindowsForms>true</UseWindowsForms>
 	<SignAssembly>False</SignAssembly>
 	<Company>Zero零渡</Company>
-	<Copyright>Lacyway 2023</Copyright>
-	<PackageProjectUrl>https://github.com/Lacyway/V-Rising-Server-Manager</PackageProjectUrl>
-	<RepositoryUrl>https://github.com/Lacyway/V-Rising-Server-Manager</RepositoryUrl>
+	<Copyright>aghosto 2026</Copyright>
+	<PackageProjectUrl>https://github.com/aghosto/Soulmask-Server-Manager</PackageProjectUrl>
+	<RepositoryUrl>https://github.com/aghosto/Soulmask-Server-Manager</RepositoryUrl>
 	<ApplicationIcon>logo.ico</ApplicationIcon>
 	<ErrorReport>none</ErrorReport>
-	<Description>Server manager for SoulMask.</Description>
+	<Description>Server(s) manager for SoulMask.</Description>
 	<ApplicationManifest>app.manifest</ApplicationManifest>
 	<AllowUnsafeBlocks>True</AllowUnsafeBlocks>
   </PropertyGroup>

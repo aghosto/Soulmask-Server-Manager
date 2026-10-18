@@ -485,7 +485,10 @@ namespace SoulmaskServerManager
                             Directory.CreateDirectory(settingFolderPath);
 
                         if (File.Exists(settingPath))
-                            File.Copy(settingPath, settingFolderPath + @"\ServerSettings.bak", true);
+                            File.Copy(settingPath, settingFolderPath + @"\ServerSettings.json.bak", true);
+
+                        if (File.Exists(settingFolderPath + @"\ServerSettings.bak"))
+                            File.Delete(settingFolderPath + @"\ServerSettings.bak");
 
                         if (ClusterModeComboBox.SelectedIndex == 2 && MainServerListBox.SelectedItem is ServerListItem listItem)
                         {

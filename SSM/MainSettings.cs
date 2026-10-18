@@ -104,7 +104,7 @@ public class Server : PropertyChangedBase
         set => SetField(ref _ssmServerName, value);
     }
 
-    private string _path = Directory.GetCurrentDirectory() + @"\Server";
+    private string _path = System.IO.Path.Combine(Directory.GetCurrentDirectory(), "ServersDir", "Server");
     public string Path
     {
         get => _path;

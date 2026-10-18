@@ -1580,7 +1580,7 @@ public partial class MainWindow : Window
 
             try
             {
-                var response = await httpClient.GetAsync("https://raw.githubusercontent.com/aghosto/Soulmask-Server-Manager/refs/heads/master/VERSION");
+                var response = await httpClient.GetAsync("https://raw.githubusercontent.com/aghosto/Soulmask-Server-Manager/refs/heads/main/VERSION");
                 response.EnsureSuccessStatusCode();
                 latestVersion = await response.Content.ReadAsStringAsync();
             }

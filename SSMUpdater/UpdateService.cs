@@ -97,7 +97,7 @@ public sealed class UpdateService
 
             List<string> updateFiles = Directory
                 .EnumerateFiles(extractedDir, "*", SearchOption.AllDirectories)
-                .Where(file => !IsUpdaterFile(Path.GetFileName(file)))
+                .Where(file => !IsProtectedUpdaterFile(Path.GetFileName(file)))
                 .ToList();
             if (updateFiles.Count == 0)
                 return new UpdateResult(false, "更新包中没有可安装的文件。");
@@ -373,12 +373,14 @@ public sealed class UpdateService
         return (version, downloadUrl);
     }
 
-    private static bool IsUpdaterFile(string fileName)
+    private static bool IsProtectedUpdaterFile(string fileName)
     {
         return fileName.Equals("SSMUpdater.exe", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("SSMUpdater.dll", StringComparison.OrdinalIgnoreCase) ||
                fileName.Equals("SSMUpdater.deps.json", StringComparison.OrdinalIgnoreCase) ||
-               fileName.Equals("SSMUpdater.runtimeconfig.json", StringComparison.OrdinalIgnoreCase);
+               fileName.Equals("SSMUpdater.runtimeconfig.json", StringComparison.OrdinalIgnoreCase) ||
+               fileName.Equals("ModernWpf.dll", StringComparison.OrdinalIgnoreCase) ||
+               fileName.Equals("ModernWpf.Controls.dll", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GetSafeDestinationPath(string installDir, string relativePath)

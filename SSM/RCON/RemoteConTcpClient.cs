@@ -54,6 +54,11 @@ namespace SoulmaskServerManager.RCON
         private bool _connected;
 
         /// <summary>
+        /// Ensures that socket cleanup is performed only once when several close signals race.
+        /// </summary>
+        private int _connectionClosed;
+
+        /// <summary>
         ///     Has the client been successfully authenticated
         /// </summary>
         internal bool Authenticated;
@@ -100,16 +105,27 @@ namespace SoulmaskServerManager.RCON
         {
             if (_isUnitTest)
                 return;
-            _remoteConServer.RemoveClient(_tcp);
-            _remoteConServer.LogDebug(((IPEndPoint)_tcp.Client.RemoteEndPoint).Address + " connection closed.");
 
-            _connected = false;
-
-            if (!_tcp.Connected)
+            if (Interlocked.Exchange(ref _connectionClosed, 1) != 0)
                 return;
 
-            _tcp.Client.Disconnect(false);
-            _tcp.Close();
+            _connected = false;
+            try
+            {
+                string remoteAddress = _tcp.Client.RemoteEndPoint is IPEndPoint endpoint
+                    ? endpoint.Address.ToString()
+                    : "Unknown client";
+                _remoteConServer.RemoveClient(_tcp);
+                _remoteConServer.LogDebug(remoteAddress + " connection closed.");
+            }
+            catch (ObjectDisposedException)
+            {
+                _remoteConServer.RemoveClient(_tcp);
+            }
+            finally
+            {
+                _tcp.Close();
+            }
         }
 
         /// <summary>
@@ -140,15 +156,15 @@ namespace SoulmaskServerManager.RCON
                 var bytesRead = _ns.EndRead(result);
                 if (!_tcp.Connected || !_connected)
                 {
-                    _remoteConServer.LogDebug(((IPEndPoint)_tcp.Client.RemoteEndPoint).Address + " lost connection.");
                     CloseConnection();
                     return;
                 }
 
                 if (bytesRead == 0)
                 {
-                    _buffer = new byte[MaxAllowedPacketSize];
-                    _ns.BeginRead(_buffer, 0, MaxAllowedPacketSize, OnPacket, null);
+                    // A zero-byte read is an orderly peer shutdown. Re-arming BeginRead here
+                    // repeatedly receives EOF and can recurse until the thread stack overflows.
+                    CloseConnection();
                     return;
                 }
 
@@ -171,7 +187,6 @@ namespace SoulmaskServerManager.RCON
 
                 if (!_connected || !_tcp.Connected)
                 {
-                    _remoteConServer.LogDebug(((IPEndPoint)_tcp.Client.RemoteEndPoint).Address + " lost connection.");
                     CloseConnection();
                     return;
                 }
@@ -181,7 +196,14 @@ namespace SoulmaskServerManager.RCON
             }
             catch (IOException)
             {
-                _remoteConServer.LogDebug(((IPEndPoint)_tcp.Client.RemoteEndPoint).Address + " lost connection.");
+                CloseConnection();
+            }
+            catch (ObjectDisposedException)
+            {
+                CloseConnection();
+            }
+            catch (SocketException)
+            {
                 CloseConnection();
             }
             catch (ThreadAbortException)

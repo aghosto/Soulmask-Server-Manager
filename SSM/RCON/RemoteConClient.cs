@@ -74,6 +74,11 @@ namespace SoulmaskServerManager.RCON
         private int _packetId;
 
         /// <summary>
+        /// Prevents duplicate disconnect callbacks from racing socket events.
+        /// </summary>
+        private int _disconnecting;
+
+        /// <summary>
         ///     If the client is authenticated
         /// </summary>
         public bool Authenticated;
@@ -142,6 +147,7 @@ namespace SoulmaskServerManager.RCON
         /// <param name="port">The port to connect to</param>
         public void Connect(string hostname, int port)
         {
+            Interlocked.Exchange(ref _disconnecting, 0);
             Log(string.Format("正在连接 {0}:{1}", hostname, port));
             try
             {
@@ -216,14 +222,26 @@ namespace SoulmaskServerManager.RCON
         /// </summary>
         public void Disconnect()
         {
-            if (_client.Connected)
-            {
-                _client.Client.Disconnect(false);
-                if (OnConnectionStateChange != null)
-                    OnConnectionStateChange(ConnectionStateChange.Disconnected);
-            }
+            if (Interlocked.Exchange(ref _disconnecting, 1) != 0)
+                return;
 
-            _client.Close();
+            try
+            {
+                if (_client.Connected)
+                {
+                    try
+                    {
+                        _client.Client.Shutdown(SocketShutdown.Both);
+                    }
+                    catch (SocketException) { }
+                    catch (ObjectDisposedException) { }
+                }
+            }
+            finally
+            {
+                _client.Close();
+                OnConnectionStateChange?.Invoke(ConnectionStateChange.Disconnected);
+            }
         }
 
         /// <summary>
@@ -299,8 +317,10 @@ namespace SoulmaskServerManager.RCON
 
                 if (bytesRead == 0)
                 {
-                    _buffer = new byte[MaxAllowedPacketSize];
-                    _ns.BeginRead(_buffer, 0, MaxAllowedPacketSize, OnPacket, null);
+                    // EndRead returns zero when the peer closes cleanly. Do not issue another
+                    // BeginRead on an EOF socket, which can create an unbounded callback loop.
+                    OnConnectionStateChange?.Invoke(ConnectionStateChange.ConnectionLost);
+                    Disconnect();
                     return;
                 }
 
@@ -446,7 +466,7 @@ namespace SoulmaskServerManager.RCON
         public Task<bool> UnmutePlayerAsync(string host, int port, string steamId) =>
             ExecuteAndCheck(host, port, $"usp 4 0 {steamId}");
 
-        private async Task<bool> SendRestartAnnounceToSingleServer(string host, int port, string password, string text)
+        private async Task<bool> SendRconMessageAsync(string host, int port, string password, string text)
         {
             try
             {
@@ -478,48 +498,23 @@ namespace SoulmaskServerManager.RCON
             }
         }
 
-        public async Task SendRestartAnnounceToSingleServer(Server server, string msg)
+        public async Task SendRconMessageAsync(Server server, string msg)
         {
             try
             {
                 var settings = ServerSettingsEditor.LoadServerSettings(Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json"));
                 var rcon = new RemoteConClient();
-                await rcon.SendRestartAnnounceToSingleServer("127.0.0.1", settings.Rcon.Port, settings.Password, msg);
+                await rcon.SendRconMessageAsync("127.0.0.1", settings.Rcon.Port, settings.Password, msg);
             }
             catch
             { }
         }
 
         /// <summary>
-        /// 使用管理器中保存的 RCON 连接信息向服务器聊天频道发送一条消息。
+        /// 按服务器配置使用与公告相同的 RCON 连接、认证和 Say 命令流程发送定时消息。
         /// </summary>
-        public Task<bool> SendRconMessageAsync(Server server, string message)
-        {
-            if (server == null || string.IsNullOrWhiteSpace(message))
-                return Task.FromResult(false);
-
-            string safeMessage = message.Replace("\r", " ").Replace("\n", " ").Trim();
-            if (string.IsNullOrWhiteSpace(safeMessage))
-                return Task.FromResult(false);
-
-            string settingsPath = Path.Combine(server.Path, "SaveData", "Settings", "ServerSettings.json");
-            if (!File.Exists(settingsPath))
-                return Task.FromResult(false);
-
-            try
-            {
-                ServerSettings settings = ServerSettingsEditor.LoadServerSettings(settingsPath);
-                string host = string.IsNullOrWhiteSpace(settings.Rcon.IP) ? "127.0.0.1" : settings.Rcon.IP;
-                if (settings.Rcon.Port <= 0 || string.IsNullOrWhiteSpace(settings.Rcon.Password))
-                    return Task.FromResult(false);
-
-                return SendRestartAnnounceToSingleServer(host, settings.Rcon.Port, settings.Rcon.Password, safeMessage);
-            }
-            catch
-            {
-                return Task.FromResult(false);
-            }
-        }
+        public async Task SendScheduledRconMessageAsync(Server server, string message) =>
+            await SendRconMessageAsync(server, message);
 
         // 只有在游戏中踢人的指令，在游戏外只能通过先加入黑名单再把他从黑名单移除的方法模拟踢人操作
         public async Task<bool> KickPlayerAsync(string host, int port, string steamId)

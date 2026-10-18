@@ -70,6 +70,7 @@ public partial class MainWindow : Window
 
     private readonly SemaphoreSlim _serverUpdateSemaphore = new(1, 1);
     private Server? _serverBeingUpdated;
+    private CancellationTokenSource? _serverUpdateCancellation;
     private static readonly Regex SteamCmdProgressRegex = new(
         @"progress:\s*(?<percentage>\d+(?:\.\d+)?)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -166,6 +167,7 @@ public partial class MainWindow : Window
                 _logRequestVersion++;
                 _currentServer = selectedServer;
                 _ssmPathManager = new (Directory.GetCurrentDirectory(), _currentServer);
+                UpdateServerUpdateButtonState(selectedServer);
                 if (!string.IsNullOrEmpty(_activeLogType))
                 {
                     if (_activeLogType == "PlayerData")
@@ -180,21 +182,6 @@ public partial class MainWindow : Window
                         ConfigureActiveLogMonitoring();
                         await LoadLogByTypeAsync(_logTagToType[_activeLogType], forceReload: true);
                     }
-                }
-                if (_currentServer.Runtime.State == ServerRuntime.ServerState.更新中)
-                {
-                    UpdateButton.IsEnabled = true;
-                    UpdateButtonText.Text = "取消更新";
-                }
-                else if (_currentServer.Runtime.State == ServerRuntime.ServerState.已停止)
-                {
-                    UpdateButton.IsEnabled = true;
-                    UpdateButtonText.Text = "更新服务器";
-                }
-                else if (_currentServer.Runtime.State == ServerRuntime.ServerState.运行中)
-                {
-                    UpdateButton.IsEnabled = false;
-                    UpdateButtonText.Text = "更新服务器";
                 }
             }
         };
@@ -709,9 +696,9 @@ public partial class MainWindow : Window
                         continue;
 
                     _scheduledRconMessages[key] = (intervalMinutes, now.AddMinutes(intervalMinutes));
-                    bool sent = await RCONClient.SendRconMessageAsync(server, message);
-                    if (!sent)
-                        ShowLogWarning($"[{server.ssmServerName}] RCON 定时消息发送失败，请检查服务器状态和 RCON 连接配置。");
+                    await RCONClient.SendScheduledRconMessageAsync(server, message);
+                    //if (!sent)
+                    //    ShowLogWarning($"[{server.ssmServerName}] RCON 定时消息发送失败，请检查服务器状态和 RCON 连接配置。");
                 }
             }
 
@@ -770,17 +757,17 @@ public partial class MainWindow : Window
                 if (left.TotalMinutes <= 10 && left.TotalMinutes > 5 && !state.Sent10MinuteWarning)
                 {
                     state.Sent10MinuteWarning = true;
-                    await RCONClient.SendRestartAnnounceToSingleServer(server, "【服务器通知】服务器将在 10 分钟后自动重启，请尽快安全下线！");
+                    await RCONClient.SendRconMessageAsync(server, "【服务器通知】服务器将在 10 分钟后自动重启，请尽快安全下线！");
                 }
                 if (left.TotalMinutes <= 5 && left.TotalMinutes > 1 && !state.Sent5MinuteWarning)
                 {
                     state.Sent5MinuteWarning = true;
-                    await RCONClient.SendRestartAnnounceToSingleServer(server, "【服务器通知】服务器将在 5 分钟后自动重启！");
+                    await RCONClient.SendRconMessageAsync(server, "【服务器通知】服务器将在 5 分钟后自动重启！");
                 }
                 if (left.TotalMinutes <= 1 && left.TotalSeconds > 10 && !state.Sent1MinuteWarning)
                 {
                     state.Sent1MinuteWarning = true;
-                    await RCONClient.SendRestartAnnounceToSingleServer(server, "【服务器通知】服务器将在 1 分钟后立即重启，请立刻下线！");
+                    await RCONClient.SendRconMessageAsync(server, "【服务器通知】服务器将在 1 分钟后立即重启，请立刻下线！");
                 }
                 if (now >= targetTime && now < targetTime.AddMinutes(1))
                 {
@@ -1586,7 +1573,7 @@ public partial class MainWindow : Window
             }
             catch
             {
-                var response = await httpClient.GetAsync("https://gitee.com/aGHOSToZero/Soulmask-Server-Manager/raw/master/VERSION");
+                var response = await httpClient.GetAsync("https://gitee.com/aGHOSToZero/Soulmask-Server-Manager/raw/main/VERSION");
                 response.EnsureSuccessStatusCode();
                 latestVersion = await response.Content.ReadAsStringAsync();
             }
@@ -1799,15 +1786,18 @@ public partial class MainWindow : Window
         // 自动更新等内部流程也经过这里，避免多个服务器同时启动 SteamCMD。
         await _serverUpdateSemaphore.WaitAsync();
         _serverBeingUpdated = server;
+        var cancellation = new CancellationTokenSource();
+        _serverUpdateCancellation = cancellation;
 
         try
         {
-            return await UpdateGameCore(server);
+            return await UpdateGameCore(server, cancellation.Token);
         }
         finally
         {
-            _serverBeingUpdated = null;
-            _serverUpdateSemaphore.Release();
+            if (ReferenceEquals(_serverUpdateCancellation, cancellation))
+                _serverUpdateCancellation = null;
+            cancellation.Dispose();
             Dispatcher.Invoke(() =>
             {
                 InstallationProgressBar.IsIndeterminate = false;
@@ -1816,6 +1806,8 @@ public partial class MainWindow : Window
                 InstallationProgressText.Text = string.Empty;
                 InstallationProgressText.Visibility = Visibility.Collapsed;
             });
+            _serverBeingUpdated = null;
+            _serverUpdateSemaphore.Release();
         }
     }
 
@@ -1824,7 +1816,7 @@ public partial class MainWindow : Window
     /// </summary>
     /// <param name="server">要处理的服务器实例。</param>
     /// <returns>异步操作是否成功。</returns>
-    private async Task<bool> UpdateGameCore(Server server)
+    private async Task<bool> UpdateGameCore(Server server, CancellationToken cancellationToken)
     {
         if (server.Runtime.State == ServerRuntime.ServerState.更新中)
         {
@@ -1839,6 +1831,12 @@ public partial class MainWindow : Window
             return false;
         }
         server.Runtime.State = ServerRuntime.ServerState.更新中;
+        if (cancellationToken.IsCancellationRequested)
+        {
+            server.Runtime.State = ServerRuntime.ServerState.已停止;
+            return false;
+        }
+
         Process steamcmd = null;
         bool showSteamCMDWindow = SsmSettings.AppSettings?.ShowSteamCMDWindow ?? true;
 
@@ -1864,6 +1862,12 @@ public partial class MainWindow : Window
             return false;
         }
 
+        if (cancellationToken.IsCancellationRequested)
+        {
+            server.Runtime.State = ServerRuntime.ServerState.已停止;
+            return false;
+        }
+
         string steamCmdDir = Path.Combine(Directory.GetCurrentDirectory(), @"SteamCMD");
         string steamCmdPath = Path.Combine(steamCmdDir, "steamcmd.exe");
 
@@ -1874,9 +1878,9 @@ public partial class MainWindow : Window
             try
             {
                 using var httpClient = new HttpClient();
-                byte[] fileBytes = await httpClient.GetByteArrayAsync(@"https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip");
+                byte[] fileBytes = await httpClient.GetByteArrayAsync(@"https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip", cancellationToken);
                 string zipPath = Path.Combine(Directory.GetCurrentDirectory(), "steamcmd.zip");
-                await File.WriteAllBytesAsync(zipPath, fileBytes);
+                await File.WriteAllBytesAsync(zipPath, fileBytes, cancellationToken);
 
                 if (!Directory.Exists(steamCmdDir))
                     Directory.CreateDirectory(steamCmdDir);
@@ -1887,10 +1891,24 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    ShowLogWarning($"已取消服务器 {server.ssmServerName} 的 SteamCMD 下载");
+                    server.Runtime.State = ServerRuntime.ServerState.已停止;
+                    return false;
+                }
+
                 ShowLogError($"SteamCMD下载失败：{ex.Message}");
                 server.Runtime.State = ServerRuntime.ServerState.已停止;
                 return false;
             }
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            ShowLogWarning($"已取消服务器 {server.ssmServerName} 的更新");
+            server.Runtime.State = ServerRuntime.ServerState.已停止;
+            return false;
         }
 
         bool isNewInstall = !Directory.EnumerateFiles(server.Path).Any();
@@ -2000,6 +2018,7 @@ public partial class MainWindow : Window
                 steamcmd.ErrorDataReceived += (_, e) => HandleSteamCmdOutputLine(e.Data, isStandardOutput: false);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             steamcmd.Start();
             server.Runtime.Process = steamcmd;
             if (!showSteamCMDWindow)
@@ -2008,6 +2027,13 @@ public partial class MainWindow : Window
                 steamcmd.BeginErrorReadLine();
             }
             await steamcmd.WaitForExitAsync();
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                ShowLogWarning($"已取消服务器 {server.ssmServerName} 的更新");
+                server.Runtime.State = ServerRuntime.ServerState.已停止;
+                return false;
+            }
 
             if (Volatile.Read(ref hasError) != 0 || steamcmd.ExitCode != 0)
             {
@@ -2020,6 +2046,12 @@ public partial class MainWindow : Window
                 server.Runtime.State = ServerRuntime.ServerState.已停止;
                 return true;
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            ShowLogWarning($"已取消服务器 {server.ssmServerName} 的更新");
+            server.Runtime.State = ServerRuntime.ServerState.已停止;
+            return false;
         }
         catch (Exception ex)
         {
@@ -2059,10 +2091,7 @@ public partial class MainWindow : Window
             var process = server.Runtime.Process;
             if (process != null && !process.HasExited)
             {
-                process.Kill();
-                process.WaitForExit(1000);
-                process.Dispose();
-                server.Runtime.Process = null;
+                process.Kill(entireProcessTree: true);
                 ShowLogError($"已终止服务器 {server.ssmServerName} 的更新");
             }
         }
@@ -2083,12 +2112,13 @@ public partial class MainWindow : Window
     /// <returns>异步操作是否成功。</returns>
     private async Task<bool> StartServer(Server server)
     {
-        if (server.Runtime.Process != null)
+        if (server.Runtime.Process != null || server.Runtime.State == ServerRuntime.ServerState.启动中)
         {
             ShowLogError($"错误：{server.ssmServerName} 已在运行中");
             return false;
         }
 
+        server.Runtime.State = ServerRuntime.ServerState.启动中;
         try
         {
             var ssmPath = new SSMPathManager(Directory.GetCurrentDirectory(), server);
@@ -2098,7 +2128,7 @@ public partial class MainWindow : Window
             ShowLogWarning($"启动服务器：{server.ssmServerName}{(server.Runtime.RestartAttempts > 0 ? $" 尝试 {server.Runtime.RestartAttempts}/3" : "")}");
 
             string serverExePath = Path.Combine(server.Path, "StartServer.bat");
-            string soulmaskExe = _ssmPathManager.ServerExePath;
+            string soulmaskExe = ssmPath.ServerExePath;
 
             if (!File.Exists(serverExePath))
             {
@@ -2219,6 +2249,14 @@ public partial class MainWindow : Window
         {
             ShowLogError($"启动服务器失败：{ex.Message}");
             return false;
+        }
+        finally
+        {
+            if (server.Runtime.State == ServerRuntime.ServerState.启动中 &&
+                (server.Runtime.Process == null || server.Runtime.Process.HasExited))
+            {
+                server.Runtime.State = ServerRuntime.ServerState.已停止;
+            }
         }
     }
 
@@ -2510,11 +2548,11 @@ public partial class MainWindow : Window
         }
 
         foreach (var server in runningServers)
-            await RCONClient.SendRestartAnnounceToSingleServer(server, "【服务器更新公告】服务器将在 5分钟 后立即更新重启，更新耗时预计为 30 分钟，请尽快下线并更新玩家客户端后重新加入游戏！");
+            await RCONClient.SendRconMessageAsync(server, "【服务器更新公告】服务器将在 5分钟 后立即更新重启，更新耗时预计为 30 分钟，请尽快下线并更新玩家客户端后重新加入游戏！");
 
         await Task.Delay(TimeSpan.FromMinutes(4));
         foreach (var server in runningServers)
-            await RCONClient.SendRestartAnnounceToSingleServer(server, "【服务器更新公告】服务器将在 1分钟 后立即更新重启，更新耗时预计为 30 分钟，请立刻下线并更新玩家客户端后重新加入游戏！");
+            await RCONClient.SendRconMessageAsync(server, "【服务器更新公告】服务器将在 1分钟 后立即更新重启，更新耗时预计为 30 分钟，请立刻下线并更新玩家客户端后重新加入游戏！");
 
         await Task.Delay(TimeSpan.FromMinutes(1));
         var stopTasks = runningServers.Select(StopServer).ToList();
@@ -2971,7 +3009,6 @@ public partial class MainWindow : Window
 
         try
         {
-            button.IsEnabled = false;
             string batPath = Path.Combine(server.Path, "StartServer.bat");
             if (!File.Exists(batPath))
             {
@@ -2988,10 +3025,6 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             ShowLogError($"{server.ssmServerName} 启动异常：{ex.Message}");
-        }
-        finally
-        {
-            button.IsEnabled = true;
         }
     }
 
@@ -3016,8 +3049,10 @@ public partial class MainWindow : Window
             if (server.Runtime.State == ServerRuntime.ServerState.更新中)
             {
                 ShowLogWarning($"正在取消服务器 {server.ssmServerName} 的更新...");
+                _serverUpdateCancellation?.Cancel();
                 KillServerSteamcmd(server);
-                server.Runtime.State = ServerRuntime.ServerState.已停止;
+                while (ReferenceEquals(_serverBeingUpdated, server))
+                    await Task.Delay(50);
                 return;
             }
 
@@ -3048,9 +3083,27 @@ public partial class MainWindow : Window
         }
         finally
         {
-            UpdateButtonText.Text = "更新服务器";
-            button.IsEnabled = true;
+            UpdateServerUpdateButtonState(_currentServer ?? server);
         }
+    }
+
+    /// <summary>
+    /// 根据服务器运行状态和是否已安装游戏文件更新主界面的下载/更新按钮。
+    /// </summary>
+    /// <param name="server">当前选中的服务器。</param>
+    private void UpdateServerUpdateButtonState(Server server)
+    {
+        if (server.Runtime.State == ServerRuntime.ServerState.更新中)
+        {
+            UpdateButtonText.Text = "取消更新";
+            UpdateButton.IsEnabled = true;
+            return;
+        }
+
+        UpdateButtonText.Text = File.Exists(Path.Combine(server.Path, "WSServer.exe"))
+            ? "更新服务器"
+            : "下载服务器";
+        UpdateButton.IsEnabled = server.Runtime.State != ServerRuntime.ServerState.运行中;
     }
 
     /// <summary>
@@ -3590,11 +3643,11 @@ public partial class MainWindow : Window
 
             try
             {
-                latestVersion = await HttpClient.GetStringAsync("https://raw.githubusercontent.com/aghosto/Soulmask-Server-Manager/refs/heads/master/VERSION");
+                latestVersion = await HttpClient.GetStringAsync("https://raw.githubusercontent.com/aghosto/Soulmask-Server-Manager/refs/heads/main/VERSION");
             }
             catch
             {
-                latestVersion = await HttpClient.GetStringAsync("https://gitee.com/aGHOSToZero/Soulmask-Server-Manager/raw/master/VERSION");
+                latestVersion = await HttpClient.GetStringAsync("https://gitee.com/aGHOSToZero/Soulmask-Server-Manager/raw/main/VERSION");
             }
 
             latestVersion = latestVersion.Trim();

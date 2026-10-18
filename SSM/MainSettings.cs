@@ -260,7 +260,8 @@ public class ServerRuntime : PropertyChangedBase
     {
         已停止,
         运行中,
-        更新中
+        更新中,
+        启动中
     }
     private ServerState _state = ServerState.已停止;
     public ServerState State

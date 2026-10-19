@@ -17,6 +17,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -128,6 +129,7 @@ public partial class MainWindow : Window
             ThemeManager.Current.ApplicationTheme = ApplicationTheme.Light;
 
         InitializeComponent();
+        AppVersion.Text = $"软件版本：{GetCurrentAppVersion()}";
         Closing += MainWindow_Closing;
         Loaded += MainWindow_Loaded;
 
@@ -1614,78 +1616,90 @@ public partial class MainWindow : Window
     #region AppVersionCheck
 
     /// <summary>
+    /// 返回由 VERSION 文件写入程序集元数据的本地三段版本号。
+    /// </summary>
+    private static Version GetCurrentAppVersion()
+    {
+        Version? assemblyVersion = typeof(App).Assembly.GetName().Version;
+        return assemblyVersion is null
+            ? new Version(0, 0, 0)
+            : new Version(assemblyVersion.Major, assemblyVersion.Minor, Math.Max(assemblyVersion.Build, 0));
+    }
+
+    /// <summary>
+    /// 从 GitHub 或 Gitee 最新正式 Release 读取并解析三段版本号。
+    /// </summary>
+    private static async Task<Version> GetLatestAppVersionAsync()
+    {
+        string[] releaseSources =
+        {
+            "https://api.github.com/repos/aghosto/Soulmask-Server-Manager/releases/latest",
+            "https://gitee.com/api/v5/repos/aGHOSToZero/Soulmask-Server-Manager/releases/latest"
+        };
+        Exception? lastError = null;
+
+        foreach (string source in releaseSources)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, source);
+                request.Headers.UserAgent.ParseAdd("SoulmaskServerManager/1.0");
+                using HttpResponseMessage response = await HttpClient.SendAsync(request);
+                response.EnsureSuccessStatusCode();
+
+                using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                if (!document.RootElement.TryGetProperty("tag_name", out JsonElement tagElement))
+                    throw new InvalidDataException("最新 Release 未提供 tag_name 版本标签。");
+
+                string versionText = tagElement.GetString()?.Trim().TrimStart('v', 'V') ?? string.Empty;
+                if (!Version.TryParse(versionText, out Version? parsedVersion) || parsedVersion.Build < 0)
+                    throw new InvalidDataException($"最新 Release 的版本标签无效：{versionText}");
+
+                return new Version(parsedVersion.Major, parsedVersion.Minor, parsedVersion.Build);
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+        }
+
+        throw new InvalidOperationException("无法从 GitHub 或 Gitee 读取有效的最新 Release 版本。", lastError);
+    }
+
+    /// <summary>
+    /// 统一检查远端版本、更新本地更新状态，并按调用场景显示结果。
+    /// </summary>
+    private async Task<(Version Current, Version Latest)> CheckAppUpdateAsync(bool showUpToDate)
+    {
+        Version currentVersion = GetCurrentAppVersion();
+        Version latestVersion = await GetLatestAppVersionAsync();
+        bool hasNewVersion = latestVersion > currentVersion;
+
+        SsmSettings.AppSettings.HasNewVersion = hasNewVersion;
+        SsmSettings.AppSettings.NewVersion = latestVersion.ToString(3);
+
+        if (hasNewVersion)
+            ShowLogWarning($"发现新版本：{latestVersion:0.0.0}，可点击左下角版本号进行更新");
+        else if (showUpToDate)
+            ShowLogDefault(latestVersion == currentVersion
+                ? $"当前软件已是最新版本：{latestVersion:0.0.0}"
+                : $"当前版本 {currentVersion:0.0.0} 高于线上版本 {latestVersion:0.0.0}，不执行降级更新。");
+
+        return (currentVersion, latestVersion);
+    }
+
+    /// <summary>
     /// 在线检查管理器版本并在主控制台显示结果。
     /// </summary>
     private async void LookForAppUpdate()
     {
-        using var httpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(10)
-        };
-        httpClient.DefaultRequestHeaders.Add("User-Agent", "SSM-Client/1.0");
-
         try
         {
-            string latestVersion = null;
-
-            try
-            {
-                var response = await httpClient.GetAsync("https://raw.githubusercontent.com/aghosto/Soulmask-Server-Manager/refs/heads/main/VERSION");
-                response.EnsureSuccessStatusCode();
-                latestVersion = await response.Content.ReadAsStringAsync();
-            }
-            catch
-            {
-                var response = await httpClient.GetAsync("https://gitee.com/aGHOSToZero/Soulmask-Server-Manager/raw/main/VERSION");
-                response.EnsureSuccessStatusCode();
-                latestVersion = await response.Content.ReadAsStringAsync();
-            }
-
-            latestVersion = latestVersion.Trim();
-
-            string currentVersion = AppVersion.Text
-            .Replace("软件版本：", "") 
-            .Trim();
-
-            if (latestVersion != currentVersion)
-            {
-                SsmSettings.AppSettings.HasNewVersion = true;
-                SsmSettings.AppSettings.NewVersion = latestVersion;
-                ShowLogWarning($"发现新版本：{latestVersion}，可点击左下角版本号进行更新");
-            }
-            else
-            {
-                SsmSettings.AppSettings.HasNewVersion = false;
-                ShowLogDefault($"当前软件已是最新版本：{latestVersion}");
-            }
-        }
-        catch (HttpRequestException ex)
-        {
-            string errorMessage = "检查更新失败：网络异常";
-
-            if (ex.InnerException != null)
-            {
-                string inner = ex.InnerException.Message.ToLower();
-                if (inner.Contains("eof") || inner.Contains("closed")) 
-                    errorMessage = "服务器连接关闭";
-                else if (inner.Contains("timeout")) 
-                    errorMessage = "连接超时";
-                else if (inner.Contains("host") || inner.Contains("resolve")) 
-                    errorMessage = "无法连接服务器";
-                else if (ex.InnerException is System.Security.Authentication.AuthenticationException) 
-                    errorMessage = "SSL安全认证失败";
-            }
-            else if (ex.StatusCode.HasValue)
-            {
-                errorMessage = $"服务器错误：{ex.StatusCode}";
-            }
-
-            ShowLogError(errorMessage);
-            ShowLogError("无法检查更新，请检查网络后重试");
+            await CheckAppUpdateAsync(showUpToDate: false);
         }
         catch (Exception ex)
         {
-            ShowLogError($"检查更新出错：{ex.Message}");
+            ShowLogError($"检查更新失败：{ex.Message}");
         }
     }
     #endregion AppVersionCheck
@@ -3702,28 +3716,13 @@ public partial class MainWindow : Window
     {
         try
         {
-            string latestVersion = null;
+            (Version currentVersion, Version latestVersion) = await CheckAppUpdateAsync(showUpToDate: true);
 
-            try
-            {
-                latestVersion = await HttpClient.GetStringAsync("https://raw.githubusercontent.com/aghosto/Soulmask-Server-Manager/refs/heads/main/VERSION");
-            }
-            catch
-            {
-                latestVersion = await HttpClient.GetStringAsync("https://gitee.com/aGHOSToZero/Soulmask-Server-Manager/raw/main/VERSION");
-            }
-
-            latestVersion = latestVersion.Trim();
-
-            string currentVersion = AppVersion.Text
-            .Replace("软件版本：", "") 
-            .Trim();
-
-            if (latestVersion != currentVersion)
+            if (latestVersion > currentVersion)
             {
                 ContentDialog yesNoDialog = new()
                 {
-                    Content = $"软件有新版本可用于下载，需要关闭软件进行更新，是否更新？\r\r当前版本：{currentVersion}\r最新版本：{latestVersion}",
+                    Content = $"软件有新版本可用于下载，需要关闭软件进行更新，是否更新？\r\r当前版本：{currentVersion:0.0.0}\r最新版本：{latestVersion:0.0.0}",
                     PrimaryButtonText = "是",
                     SecondaryButtonText = "否"
                 };
@@ -3746,10 +3745,6 @@ public partial class MainWindow : Window
                 {
                     ShowLogWarning($"用户取消了本次软件更新。");
                 }
-            }
-            else
-            {
-                ShowLogDefault($"当前软件已是最新版本：{latestVersion}");
             }
         }
         catch (Exception ex)

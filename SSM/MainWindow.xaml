@@ -643,7 +643,7 @@
             <StatusBarItem HorizontalAlignment="Left">
                 <Button ToolTip="单击以获取最新更新。" Click="VersionButton_Click" Height="30" Margin="5 0 0 0">
                     <Button.Content>
-                        <TextBlock x:Name="AppVersion" Text="软件版本：2.0.1">
+                        <TextBlock x:Name="AppVersion" Text="软件版本：">
                         </TextBlock>
                     </Button.Content>
                 </Button>

@@ -36,6 +36,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <UpToDateCheckInput Include="$(MSBuildProjectDirectory)\..\VERSION" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Remove="bin\**" />
     <EmbeddedResource Remove="bin\**" />
     <None Remove="bin\**" />
@@ -66,6 +70,7 @@
     <None Remove="Resources\icon_StatusStopped.png" />
     <None Remove="Resources\icon_Stop.png" />
     <None Remove="Resources\icon_ThemeSelect.png" />
+    <None Remove="Resources\icon_ChangeBackground.png" />
     <None Remove="Resources\icon_User.png" />
     <None Remove="Resources\StandardPvP_Shuffle.json" />
   </ItemGroup>
@@ -124,6 +129,9 @@
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </Resource>
     <Resource Include="Resources\icon_ThemeSelect.png">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Resource>
+    <Resource Include="Resources\icon_ChangeBackground.png">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </Resource>
     <Resource Include="Resources\icon_User.png">

@@ -364,6 +364,9 @@ FodyWeavers.xsd
 
 
 Resources/
+!SSM/Resources/
+SSM/Resources/*
+!SSM/Resources/icon_ChangeBackground.png
 
 # Temporary/Generated project files
 .omo/

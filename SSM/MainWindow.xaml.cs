@@ -198,15 +198,6 @@ public partial class MainWindow : Window
         InitScheduledRconMessagesTimer();
         InitPlayerRefreshTimer();
 
-        //if (File.Exists("SSMUpdater.exe") && File.Exists("SSMUpdater.deps.json") && File.Exists("SSMUpdater.dll") && File.Exists("SSMUpdater.runtimeconfig.json"))
-        //{
-        //    File.Delete("SSMUpdater.exe");
-        //    File.Delete("SSMUpdater.dll");
-        //    File.Delete("SSMUpdater.deps.json");
-        //    File.Delete("SSMUpdater.runtimeconfig.json");
-        //    ShowLogMsg($"旧版更新程序清理完成。", Brushes.Gray);
-        //}
-
         if (SsmSettings.AppSettings.AutoUpdateApp == true)
             LookForAppUpdate();
     }
@@ -222,12 +213,84 @@ public partial class MainWindow : Window
     /// <param name="e">事件参数。</param>
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        ScheduleUpdateTempCleanupFromArguments();
+
         if (ServerTabControl.SelectedItem is Server selectedServer)
             UpdateServerConnectionPort(selectedServer);
 
         UpdateWallpaper();
         await RestoreRunningServers();
         RefreshActiveLogMonitoringForStateChange();
+    }
+
+    /// <summary>
+    /// 在更新器退出后清理其临时更新目录，避免删除仍被使用的文件。
+    /// </summary>
+    private static void ScheduleUpdateTempCleanupFromArguments()
+    {
+        string[] args = Environment.GetCommandLineArgs();
+        int directoryIndex = Array.FindIndex(args, arg =>
+            string.Equals(arg, "--cleanup-update-dir", StringComparison.OrdinalIgnoreCase));
+        int processIndex = Array.FindIndex(args, arg =>
+            string.Equals(arg, "--wait-for-pid", StringComparison.OrdinalIgnoreCase));
+        if (directoryIndex < 0 || directoryIndex + 1 >= args.Length ||
+            processIndex < 0 || processIndex + 1 >= args.Length ||
+            !int.TryParse(args[processIndex + 1], out int updaterProcessId) || updaterProcessId <= 0)
+        {
+            return;
+        }
+
+        string cleanupDirectory;
+        try
+        {
+            cleanupDirectory = Path.GetFullPath(args[directoryIndex + 1]);
+            string tempRoot = Path.GetFullPath(Path.GetTempPath());
+            if (!cleanupDirectory.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase) ||
+                !Path.GetFileName(cleanupDirectory).StartsWith("SoulmaskServerManagerUpdate-", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+        catch
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            DateTime timeout = DateTime.UtcNow.AddMinutes(2);
+            while (IsProcessRunning(updaterProcessId) && DateTime.UtcNow < timeout)
+                await Task.Delay(250);
+
+            if (!IsProcessRunning(updaterProcessId) && Directory.Exists(cleanupDirectory))
+            {
+                try
+                {
+                    Directory.Delete(cleanupDirectory, recursive: true);
+                }
+                catch
+                {
+                    // 更新器临时文件清理失败不影响管理器运行。
+                }
+            }
+        });
+    }
+
+    private static bool IsProcessRunning(int processId)
+    {
+        try
+        {
+            using Process process = Process.GetProcessById(processId);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     private static void UpdateServerConnectionPort(Server server)

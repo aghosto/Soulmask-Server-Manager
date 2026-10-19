@@ -15,6 +15,8 @@ public partial class UpdateWindow : Window
     private bool _updateFinished;
     private bool _allowClose;
     private UpdateResult? _result;
+    private string? _cleanupDirectory;
+    private string? _installDirectory;
 
     public UpdateWindow()
     {
@@ -38,9 +40,18 @@ public partial class UpdateWindow : Window
         }
 
         _updateFinished = true;
-        UpdateProgressBar.IsIndeterminate = false;
-        if (_result.Success)
+        if (_result?.HandedOff == true)
         {
+            _allowClose = true;
+            Close();
+            return;
+        }
+
+        UpdateProgressBar.IsIndeterminate = false;
+        if (_result?.Success == true)
+        {
+            _cleanupDirectory = _result.CleanupDirectory;
+            _installDirectory = _result.InstallDirectory;
             UpdateProgressBar.Value = 100;
             StageTextBlock.Text = "更新完成";
             DetailTextBlock.Text = _result.Message;
@@ -80,13 +91,21 @@ public partial class UpdateWindow : Window
         {
             try
             {
-                string installDir = AppContext.BaseDirectory;
-                Process.Start(new ProcessStartInfo
+                string installDir = _installDirectory ?? AppContext.BaseDirectory;
+                var startInfo = new ProcessStartInfo
                 {
                     FileName = Path.Combine(installDir, "SoulmaskServerManager.exe"),
                     WorkingDirectory = installDir,
                     UseShellExecute = true
-                });
+                };
+                if (!string.IsNullOrWhiteSpace(_cleanupDirectory))
+                {
+                    startInfo.ArgumentList.Add("--cleanup-update-dir");
+                    startInfo.ArgumentList.Add(_cleanupDirectory);
+                    startInfo.ArgumentList.Add("--wait-for-pid");
+                    startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+                }
+                Process.Start(startInfo);
             }
             catch (Exception exception)
             {
